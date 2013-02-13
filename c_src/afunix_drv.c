@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <memory.h>
@@ -31,14 +32,6 @@
 #define IDENTITY(c) c
 #define STRINGIFY_1(b) IDENTITY(#b)
 #define STRINGIFY(a) STRINGIFY_1(a)
-
-#ifdef HAVE_IFADDRS_H
-#include <ifaddrs.h>
-#endif
-
-#ifdef HAVE_NETPACKET_PACKET_H
-#include <netpacket/packet.h>
-#endif
 
 /* All platforms fail on malloc errors. */
 #define FATAL_MALLOC
@@ -88,14 +81,32 @@ typedef unsigned long long llu_t;
 #include <sys/ioctl.h>
 #include <sys/un.h>
 
-/* #define INET_DRV_DEBUG 1 */
-#ifdef INET_DRV_DEBUG
-#define DEBUG 1
-#undef DEBUGF
-#define DEBUGF(X) printf X
-#else
-#define DEBUGF(X)
-#endif
+// FIXME use dlib!!!
+#define DLOG_DEBUG     7
+#define DLOG_INFO      6
+#define DLOG_NOTICE    5
+#define DLOG_WARNING   4
+#define DLOG_ERROR     3
+#define DLOG_CRITICAL  2
+#define DLOG_ALERT     1
+#define DLOG_EMERGENCY 0
+#define DLOG_NONE     -1
+
+#define DLOG(level,file,line,args...) do {			\
+	if (((level) == DLOG_EMERGENCY) ||			\
+	    ((debug_level >= 0) && ((level) <= debug_level))) { \
+	    emit_error((level),(file),(line),args);		\
+	}							\
+    } while(0)
+
+#define DEBUGF(args...) DLOG(DLOG_DEBUG,__FILE__,__LINE__,args)
+#define INFOF(args...)  DLOG(DLOG_INFO,__FILE__,__LINE__,args)
+#define NOTICEF(args...)  DLOG(DLOG_NOTICE,__FILE__,__LINE__,args)
+#define WARNINGF(args...)  DLOG(DLOG_WARNING,__FILE__,__LINE__,args)
+#define ERRORF(args...)  DLOG(DLOG_ERROR,__FILE__,__LINE__,args)
+#define CRITICALF(args...)  DLOG(DLOG_CRITICAL,__FILE__,__LINE__,args)
+#define ALERTF(args...)  DLOG(DLOG_ALERT,__FILE__,__LINE__,args)
+#define EMERGENCYF(args...)  DLOG(DLOG_EMERGENCY,__FILE__,__LINE__,args)
 
 #define INVALID_SOCKET -1
 #define INVALID_EVENT  -1
@@ -153,8 +164,8 @@ typedef unsigned long long llu_t;
         (d)->event_mask = (onoff) ? \
                  ((d)->event_mask | (flags)) : \
                  ((d)->event_mask & ~(flags)); \
-        DEBUGF(("sock_select(%ld): flags=%02X, onoff=%d, event_mask=%02lX\r\n", \
-		(long) (d)->port, (flags), (onoff), (unsigned long) (d)->event_mask)); \
+        DEBUGF("sock_select(%ld): flags=%02X, onoff=%d, event_mask=%02lX", \
+		(long) (d)->port, (flags), (onoff), (unsigned long) (d)->event_mask); \
         inet_driver_select((d)->port, (ErlDrvEvent)(long)(d)->event, (flags), (onoff)); \
    } while(0)
 
@@ -497,7 +508,7 @@ static void fire_multi_timers(MultiTimerData **first, ErlDrvPort port,
 			      ErlDrvData data);
 static void remove_multi_timer(MultiTimerData **first, ErlDrvPort port, MultiTimerData *p);
 
-static void tcp_inet_multi_timeout(ErlDrvData e, ErlDrvTermData caller);
+static void afunix_multi_timeout(ErlDrvData e, ErlDrvTermData caller);
 static void clean_multi_timers(MultiTimerData **first, ErlDrvPort port);
 
 typedef struct {
@@ -593,19 +604,19 @@ typedef struct {
 				 * vector sock_sendv().
 				 */
 
-static int tcp_inet_init(void);
-static void tcp_inet_finish(void);
-static void tcp_inet_stop(ErlDrvData);
-static void tcp_inet_command(ErlDrvData, char*, ErlDrvSizeT);
-static void tcp_inet_commandv(ErlDrvData, ErlIOVec*);
-static void tcp_inet_flush(ErlDrvData drv_data);
-static void tcp_inet_drv_input(ErlDrvData, ErlDrvEvent);
-static void tcp_inet_drv_output(ErlDrvData data, ErlDrvEvent event);
-static ErlDrvData tcp_inet_start(ErlDrvPort, char* command);
-static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData, unsigned int,
+static int afunix_init(void);
+static void afunix_finish(void);
+static void afunix_stop(ErlDrvData);
+static void afunix_command(ErlDrvData, char*, ErlDrvSizeT);
+static void afunix_commandv(ErlDrvData, ErlIOVec*);
+static void afunix_flush(ErlDrvData drv_data);
+static void afunix_drv_input(ErlDrvData, ErlDrvEvent);
+static void afunix_drv_output(ErlDrvData data, ErlDrvEvent event);
+static ErlDrvData afunix_start(ErlDrvPort, char* command);
+static ErlDrvSSizeT afunix_ctl(ErlDrvData, unsigned int,
 				 char*, ErlDrvSizeT, char**, ErlDrvSizeT);
-static void tcp_inet_timeout(ErlDrvData);
-static void tcp_inet_process_exit(ErlDrvData, ErlDrvMonitor *); 
+static void afunix_timeout(ErlDrvData);
+static void afunix_process_exit(ErlDrvData, ErlDrvMonitor *); 
 static void inet_stop_select(ErlDrvEvent, void*); 
 
 static ErlDrvEntry afunix_driver_entry;
@@ -636,17 +647,8 @@ static int tcp_sendv(tcp_descriptor* desc, ErlIOVec* ev);
 static int tcp_recv(tcp_descriptor* desc, int request_len);
 static int tcp_deliver(tcp_descriptor* desc, int len);
 
-static int tcp_inet_output(tcp_descriptor* desc, HANDLE event);
-static int tcp_inet_input(tcp_descriptor* desc, HANDLE event);
-
-typedef struct {
-    inet_descriptor inet;   /* common data structure (DON'T MOVE) */
-    int read_packets;       /* Number of packets to read per invocation */
-    int i_bufsz;            /* current input buffer size */
-    ErlDrvBinary* i_buf;    /* current binary buffer */
-    char* i_ptr;            /* current pos in buf */
-} udp_descriptor;
-
+static int afunix_output(tcp_descriptor* desc, HANDLE event);
+static int afunix_input(tcp_descriptor* desc, HANDLE event);
 
 /* convert descriptor poiner to inet_descriptor pointer */
 #define INETP(d) (&(d)->inet)
@@ -817,6 +819,30 @@ static void *realloc_wrapper(void *current, ErlDrvSizeT size){
 #define INET_DRV_CACHE_LINE_SIZE ((ErlDrvUInt) 64)
 #define INET_DRV_CACHE_LINE_MASK (INET_DRV_CACHE_LINE_SIZE - 1)
 
+
+static int debug_level = DLOG_NONE;
+
+static void set_debug(int level)
+{
+    debug_level = level;
+}
+
+static void emit_error(int level, char* file, int line, ...)
+{
+    va_list ap;
+    char* fmt;
+
+    if ((level == DLOG_EMERGENCY) ||
+	((debug_level >= 0) && (level <= debug_level))) {
+	va_start(ap, line);
+	fmt = va_arg(ap, char*);
+	fprintf(stderr, "%s:%d: ", file, line); 
+	vfprintf(stderr, fmt, ap);
+	fprintf(stderr, "\r\n");
+	va_end(ap);
+    }
+}
+
 /*
 ** Binary Buffer Managment
 ** We keep a stack of usable buffers 
@@ -837,6 +863,7 @@ typedef struct {
     char align[(((sizeof(InetDrvBufStkBase) - 1) / INET_DRV_CACHE_LINE_SIZE) + 1)
 	       * INET_DRV_CACHE_LINE_SIZE];
 } InetDrvBufStk;
+
 
 static InetDrvBufStk *get_bufstk(void)
 {
@@ -861,7 +888,7 @@ static ErlDrvBinary* alloc_buffer(ErlDrvSizeT minsz)
 {
     InetDrvBufStk *bs = get_bufstk();
 
-    DEBUGF(("alloc_buffer: "LLU"\r\n", (llu_t)minsz));
+    DEBUGF("alloc_buffer: "LLU, (llu_t)minsz);
 
     if (bs && bs->buf.pos > 0) {
 	long size;
@@ -881,7 +908,7 @@ static void release_buffer(ErlDrvBinary* buf)
     InetDrvBufStk *bs;
     long size;
 
-    DEBUGF(("release_buffer: %ld\r\n", (buf==NULL) ? 0 : buf->orig_size));
+    DEBUGF("release_buffer: %ld", (buf==NULL) ? 0 : buf->orig_size);
 
     if (!buf)
 	return;
@@ -910,7 +937,7 @@ static void release_buffer(ErlDrvBinary* buf)
  */
 static void free_buffer(ErlDrvBinary* buf)
 {
-    DEBUGF(("free_buffer: %ld\r\n", (buf==NULL) ? 0 : buf->orig_size));
+    DEBUGF("free_buffer: %ld", (buf==NULL) ? 0 : buf->orig_size);
 
     if (buf != NULL) {
 	if (driver_binary_get_refc(buf) == 1)
@@ -919,6 +946,8 @@ static void free_buffer(ErlDrvBinary* buf)
 	    driver_free_binary(buf);
     }
 }
+
+
 
 /* return lowercase string form of errno value */
 static char *errno_str(int err)
@@ -1071,7 +1100,7 @@ static int enq_async_w_tmo(inet_descriptor* desc, char* buf, int req, unsigned t
     if ((opp = desc->oph) == NULL)            /* queue empty */
 	opp = desc->oph = desc->opt = desc->op_queue;
     else if (desc->oph == desc->opt) { /* queue full */ 
-	DEBUGF(("enq(%ld): queue full\r\n", (long)desc->port));
+	DEBUGF("enq(%ld): queue full", (long)desc->port);
 	return -1;
     }
 
@@ -1083,8 +1112,8 @@ static int enq_async_w_tmo(inet_descriptor* desc, char* buf, int req, unsigned t
 	memcpy(&(opp->monitor),monitorp,sizeof(ErlDrvMonitor));
     }
 
-    DEBUGF(("enq(%ld): %d %ld %d\r\n", 
-	    (long) desc->port, opp->id, opp->caller, opp->req));
+    DEBUGF("enq(%ld): %d %ld %d", 
+	    (long) desc->port, opp->id, opp->caller, opp->req);
 
     opp++;
     if (opp >= desc->op_queue + INET_MAX_ASYNC)
@@ -1108,7 +1137,7 @@ static int deq_async_w_tmo(inet_descriptor* desc, int* ap, ErlDrvTermData* cp,
     inet_async_op* opp;
 
     if ((opp = desc->opt) == NULL) {  /* queue empty */
-	DEBUGF(("deq(%ld): queue empty\r\n", (long)desc->port));
+	DEBUGF("deq(%ld): queue empty", (long)desc->port);
 	return -1;
     }
     *ap = opp->id;
@@ -1121,8 +1150,8 @@ static int deq_async_w_tmo(inet_descriptor* desc, int* ap, ErlDrvTermData* cp,
 	memcpy(monitorp,&(opp->monitor),sizeof(ErlDrvMonitor));
     }
     
-    DEBUGF(("deq(%ld): %d %ld %d\r\n", 
-	    (long)desc->port, opp->id, opp->caller, opp->req));
+    DEBUGF("deq(%ld): %d %ld %d", 
+	    (long)desc->port, opp->id, opp->caller, opp->req);
     
     opp++;
     if (opp >= desc->op_queue + INET_MAX_ASYNC)
@@ -1200,7 +1229,7 @@ send_async_error(inet_descriptor* desc, int Ref,
 	i = LOAD_TUPLE(spec, i, 2);
     }
     i = LOAD_TUPLE(spec, i, 4);
-    DEBUGF(("send_async_error %ld %ld\r\n", recipient, Reason));
+    DEBUGF("send_async_error %ld %ld", recipient, Reason);
     return driver_send_term(desc->port, recipient, spec, i);
 }
 
@@ -1292,7 +1321,7 @@ static int inet_reply_error_am(inet_descriptor* desc, ErlDrvTermData reason)
     i = LOAD_TUPLE(spec, i, 3);
     desc->caller = 0;
     
-    DEBUGF(("inet_reply_error_am %ld %ld\r\n", caller, reason));
+    DEBUGF("inet_reply_error_am %ld %ld", caller, reason);
     return driver_send_term(desc->port, caller, spec, i);
 }
 
@@ -1311,7 +1340,7 @@ static int inet_port_data(inet_descriptor* desc, const char* buf, int len)
 {
     unsigned int hsz = desc->hsz;
 
-    DEBUGF(("inet_port_data(%ld): len = %d\r\n", (long)desc->port, len));
+    DEBUGF("inet_port_data(%ld): len = %d", (long)desc->port, len);
 
     if ((desc->mode == INET_MODE_LIST) || (hsz > len))
 	return driver_output2(desc->port, (char*)buf, len, NULL, 0);
@@ -1329,8 +1358,8 @@ inet_port_binary_data(inet_descriptor* desc, ErlDrvBinary* bin, int offs, int le
 {
     unsigned int hsz = desc->hsz;
 
-    DEBUGF(("inet_port_binary_data(%ld): offs=%d, len = %d\r\n", 
-	    (long)desc->port, offs, len));
+    DEBUGF("inet_port_binary_data(%ld): offs=%d, len = %d", 
+	    (long)desc->port, offs, len);
 
     if ((desc->mode == INET_MODE_LIST) || (hsz > len)) 
 	return driver_output2(desc->port, bin->orig_bytes+offs, len, NULL, 0);
@@ -1709,7 +1738,7 @@ static int inet_async_data(inet_descriptor* desc, const char* buf, int len)
     int aid;
     int i = 0;
 
-    DEBUGF(("inet_async_data(%ld): len = %d\r\n", (long)desc->port, len));
+    DEBUGF("inet_async_data(%ld): len = %d", (long)desc->port, len);
 
     if (deq_async(desc, &aid, &caller, &req) < 0)
 	return -1;
@@ -1773,8 +1802,8 @@ inet_async_binary_data
     int req;
     int i = 0;
 
-    DEBUGF(("inet_async_binary_data(%ld): offs=%d, len=%d\r\n", 
-	    (long)desc->port, offs, len));
+    DEBUGF("inet_async_binary_data(%ld): offs=%d, len=%d", 
+	    (long)desc->port, offs, len);
 
     if (deq_async(desc, &aid, &caller, &req) < 0)
 	return -1;
@@ -1818,8 +1847,8 @@ static int tcp_message(inet_descriptor* desc, const char* buf, int len)
     ErlDrvTermData spec[20];
     int i = 0;
 
-    DEBUGF(("tcp_message(%ld): len = %d\r\n", (long)desc->port, len));    
-    /* XXX fprintf(stderr,"tcp_message send.\r\n"); */
+    DEBUGF("tcp_message(%ld): len = %d", (long)desc->port, len);    
+    /* XXX fprintf(stderr,"tcp_message send."); */
 
     i = LOAD_ATOM(spec, i, am_tcp);
     i = LOAD_PORT(spec, i, desc->dport);
@@ -1854,7 +1883,7 @@ tcp_binary_message(inet_descriptor* desc, ErlDrvBinary* bin, int offs, int len)
     ErlDrvTermData spec[20];
     int i = 0;
 
-    DEBUGF(("tcp_binary_message(%ld): len = %d\r\n", (long)desc->port, len)); 
+    DEBUGF("tcp_binary_message(%ld): len = %d", (long)desc->port, len); 
 
     i = LOAD_ATOM(spec, i, am_tcp);
     i = LOAD_PORT(spec, i, desc->dport);
@@ -1883,7 +1912,7 @@ static int tcp_closed_message(tcp_descriptor* desc)
     ErlDrvTermData spec[6];
     int i = 0;
 
-    DEBUGF(("tcp_closed_message(%ld):\r\n", (long)desc->inet.port)); 
+    DEBUGF("tcp_closed_message(%ld):", (long)desc->inet.port); 
     if (!(desc->tcp_add_flags & TCP_ADDF_CLOSE_SENT)) {
 	desc->tcp_add_flags |= TCP_ADDF_CLOSE_SENT;
 
@@ -1904,7 +1933,7 @@ static int tcp_error_message(tcp_descriptor* desc, int err)
     ErlDrvTermData am_err = error_atom(err);
     int i = 0;
 
-    DEBUGF(("tcp_error_message(%ld): %d\r\n", (long)desc->inet.port, err)); 
+    DEBUGF("tcp_error_message(%ld): %d", (long)desc->inet.port, err); 
 
     i = LOAD_ATOM(spec, i, am_tcp_error);
     i = LOAD_PORT(spec, i, desc->inet.dport);
@@ -2048,13 +2077,16 @@ static char* inet_set_address(int family, inet_address* dst,
 {
     short port;
 
-    if ((family == AF_UNIX) && (*len >= 1)) {
+    if ((family == AF_UNIX) && 
+	((*len >= 1) && (*len < sizeof(dst->sau.sun_path)))) {
 	size_t n;
 	memzero((char*)dst, sizeof(struct sockaddr_un));
 	n = *len;
 	memcpy(dst->sau.sun_path, src, n);
 	dst->sau.sun_path[n] = '\0';
-	dst->sau.sun_len = n+1;
+	dst->sau.sun_len = n+1;  // length including '\0'
+	dst->sau.sun_family = family;
+	*len = SUN_LEN(&dst->sau);
 	return src + n;
     }
     else if ((family == AF_INET) && (*len >= 2+4)) {
@@ -2202,7 +2234,7 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	size_t n;
 	dst[0] = INET_AF_UNIX;
 	n = src->sau.sun_len - 1;
-	memcpy(dst+2, (char*)&src->sau.sun_path, n);
+	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;
 	return 0;
     }
@@ -2365,34 +2397,34 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 
 	switch(opt) {
 	case INET_LOPT_HEADER:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, HEADER=%d\r\n",
-		    (long)desc->port, desc->s,ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, HEADER=%d",
+		    (long)desc->port, desc->s,ival);
 	    desc->hsz = ival;
 	    continue;
 
 	case INET_LOPT_MODE:
 	    /* List or Binary: */
-	    DEBUGF(("inet_set_opts(%ld): s=%d, MODE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, MODE=%d",
+		    (long)desc->port, desc->s, ival);
 	    desc->mode = ival;
 	    continue;
 
 	case INET_LOPT_DELIVER:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, DELIVER=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, DELIVER=%d",
+		    (long)desc->port, desc->s, ival);
 	    desc->deliver = ival;
 	    continue;
 	    
 	case INET_LOPT_BUFFER:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, BUFFER=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, BUFFER=%d",
+		    (long)desc->port, desc->s, ival);
 	    if (ival < INET_MIN_BUFFER) ival = INET_MIN_BUFFER;
 	    desc->bufsz = ival;
 	    continue;
 
 	case INET_LOPT_ACTIVE:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, ACTIVE=%d\r\n",
-		    (long)desc->port, desc->s,ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, ACTIVE=%d",
+		    (long)desc->port, desc->s,ival);
 	    desc->active = ival;
 	    if ((desc->stype == SOCK_STREAM) && (desc->active != INET_PASSIVE) && 
 		(desc->state == INET_STATE_CLOSED)) {
@@ -2407,20 +2439,20 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    continue;
 
 	case INET_LOPT_PACKET:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, PACKET=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, PACKET=%d",
+		    (long)desc->port, desc->s, ival);
 	    desc->htype = ival;
 	    continue;
 
 	case INET_LOPT_PACKET_SIZE:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, PACKET_SIZE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, PACKET_SIZE=%d",
+		    (long)desc->port, desc->s, ival);
 	    desc->psize = (unsigned int)ival;
 	    continue;
 
 	case INET_LOPT_EXITONCLOSE:
-	    DEBUGF(("inet_set_opts(%ld): s=%d, EXITONCLOSE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, EXITONCLOSE=%d",
+		    (long)desc->port, desc->s, ival);
 	    desc->exitf = ival;
 	    continue;
 
@@ -2491,42 +2523,34 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    }
 	    continue;
 
-	case INET_LOPT_UDP_READ_PACKETS:
-	    if (desc->stype == SOCK_DGRAM) {
-		udp_descriptor* udesc = (udp_descriptor*) desc;
-		if (ival <= 0) return -1;
-		udesc->read_packets = ival;
-	    }
-	    continue;
-
 	case INET_OPT_REUSEADDR: 
 	    type = SO_REUSEADDR;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_REUSEADDR=%d\r\n",
-		    (long)desc->port, desc->s,ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_REUSEADDR=%d",
+		    (long)desc->port, desc->s,ival);
 	    break;
 	case INET_OPT_KEEPALIVE: type = SO_KEEPALIVE;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_KEEPALIVE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_KEEPALIVE=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 	case INET_OPT_DONTROUTE: type = SO_DONTROUTE;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_DONTROUTE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_DONTROUTE=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 	case INET_OPT_BROADCAST: type = SO_BROADCAST;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_BROADCAST=%d\r\n",
-		    (long)desc->port, desc->s,ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_BROADCAST=%d",
+		    (long)desc->port, desc->s,ival);
 	    break;
 	case INET_OPT_OOBINLINE: type = SO_OOBINLINE; 
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_OOBINLINE=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_OOBINLINE=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 	case INET_OPT_SNDBUF:    type = SO_SNDBUF; 
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_SNDBUF=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_SNDBUF=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 	case INET_OPT_RCVBUF:    type = SO_RCVBUF; 
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_RCVBUF=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_RCVBUF=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 	case INET_OPT_LINGER:    type = SO_LINGER; 
 	    if (len < 4)
@@ -2537,16 +2561,16 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    len -= 4;
 	    arg_ptr = (char*) &li_val;
 	    arg_sz = sizeof(li_val);
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_LINGER=%d,%d",
-		    (long)desc->port, desc->s, li_val.l_onoff,li_val.l_linger));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_LINGER=%d,%d",
+		    (long)desc->port, desc->s, li_val.l_onoff,li_val.l_linger);
 	    break;
 
 	case INET_OPT_PRIORITY: 
 #ifdef SO_PRIORITY
 	    type = SO_PRIORITY;
 	    propagate = 1; /* We do want to know if this fails */
-	    DEBUGF(("inet_set_opts(%ld): s=%d, SO_PRIORITY=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, SO_PRIORITY=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 #else
 	    continue;
@@ -2556,8 +2580,8 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    proto = SOL_IP;
 	    type = IP_TOS;
 	    propagate = 1;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, IP_TOS=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, IP_TOS=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 #else
 	    continue;
@@ -2566,8 +2590,8 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	case TCP_OPT_NODELAY:
 	    proto = IPPROTO_TCP; 
 	    type = TCP_NODELAY; 
-	    DEBUGF(("inet_set_opts(%ld): s=%d, TCP_NODELAY=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, TCP_NODELAY=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 
 
@@ -2576,8 +2600,8 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    proto = IPPROTO_IPV6;
 	    type = IPV6_V6ONLY;
 	    propagate = 1;
-	    DEBUGF(("inet_set_opts(%ld): s=%d, IPV6_V6ONLY=%d\r\n",
-		    (long)desc->port, desc->s, ival));
+	    DEBUGF("inet_set_opts(%ld): s=%d, IPV6_V6ONLY=%d",
+		    (long)desc->port, desc->s, ival);
 	    break;
 #elif defined(__WIN32__) && defined(HAVE_IN6) && defined(AF_INET6)
 	    /* Fake a'la OpenBSD; set to 'true' is fine but 'false' invalid. */
@@ -2617,8 +2641,8 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	if (propagate && res != 0) {
 	    return -1;
 	}
-	DEBUGF(("inet_set_opts(%ld): s=%d returned %d\r\n",
-		(long)desc->port, desc->s, res));
+	DEBUGF("inet_set_opts(%ld): s=%d returned %d",
+		(long)desc->port, desc->s, res);
 	if (type == SO_RCVBUF) {
 	    /* make sure we have desc->bufsz >= SO_RCVBUF */
 	    if (ival > desc->bufsz)
@@ -2639,7 +2663,7 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 		/* Return > 1 if only active changed to INET_ONCE -> direct read if
 		   header type is unchanged. */
 		/* XXX fprintf(stderr,"desc->htype == %d, old_htype == %d, 
-		   desc->active == %d, old_active == %d\r\n",(int)desc->htype, 
+		   desc->active == %d, old_active == %d",(int)desc->htype, 
 		   (int) old_htype, (int) desc->active, (int) old_active );*/
 		return 1+(desc->htype == old_htype && desc->active == INET_ONCE);
 	    }
@@ -2831,16 +2855,6 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    if (desc->stype == SOCK_STREAM) {
 		*ptr++ = opt;
 		ival = !!(((tcp_descriptor*)desc)->tcp_add_flags & TCP_ADDF_DELAY_SEND);
-		put_int32(ival, ptr);
-	    } else {
-		TRUNCATE_TO(0,ptr);
-	    }
-	    continue;
-
-	case INET_LOPT_UDP_READ_PACKETS:
-	    if (desc->stype == SOCK_DGRAM) {
-		*ptr++ = opt;
-		ival = ((udp_descriptor*)desc)->read_packets;
 		put_int32(ival, ptr);
 	    } else {
 		TRUNCATE_TO(0,ptr);
@@ -3170,7 +3184,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	      default: dstlen += 5; break;
 	      }
 	  }
-	  DEBUGF(("inet_ctl(%ld): GETSTAT\r\n", (long) desc->port)); 
+	  DEBUGF("inet_ctl(%ld): GETSTAT", (long) desc->port); 
 	  if (dstlen > INET_MAX_OPT_BUFFER) /* sanity check */
 	      return 0;
 	  if (dstlen > rsize) {
@@ -3186,7 +3200,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     case INET_REQ_SUBSCRIBE: {
 	  char* dst;
 	  int dstlen = 1 /* Reply code */ + len*5;
-	  DEBUGF(("inet_ctl(%ld): INET_REQ_SUBSCRIBE\r\n", (long) desc->port)); 
+	  DEBUGF("inet_ctl(%ld): INET_REQ_SUBSCRIBE", (long) desc->port); 
 	  if (dstlen > INET_MAX_OPT_BUFFER) /* sanity check */
 	      return 0;
 	  if (dstlen > rsize) {
@@ -3201,7 +3215,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 
     case INET_REQ_GETOPTS: {    /* get options */
 	ErlDrvSSizeT replen;
-	DEBUGF(("inet_ctl(%ld): GETOPTS\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): GETOPTS", (long)desc->port); 
 
 	if ((replen = inet_fill_opts(desc, buf, len, rbuf, rsize)) < 0) {
 	    return ctl_error(EINVAL, rbuf, rsize);
@@ -3210,8 +3224,8 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     }
 
     case INET_REQ_SETOPTS:  {   /* set options */
-	DEBUGF(("inet_ctl(%ld): SETOPTS\r\n", (long)desc->port)); 
-	/* XXX fprintf(stderr,"inet_ctl(%ld): SETOPTS (len = %d)\r\n", (long)desc->port,(int) len); */
+	DEBUGF("inet_ctl(%ld): SETOPTS", (long)desc->port); 
+	/* XXX fprintf(stderr,"inet_ctl(%ld): SETOPTS (len = %d)", (long)desc->port,(int) len); */
 	switch(inet_set_opts(desc, buf, len)) {
 	case -1: 
 	    return ctl_error(EINVAL, rbuf, rsize);
@@ -3221,11 +3235,11 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	    /*
 	     * Let's hope that the descriptor really is a tcp_descriptor here.
 	     */
-	    /* fprintf(stderr,"Triggered tcp_deliver by setopt.\r\n"); */
+	    /* fprintf(stderr,"Triggered tcp_deliver by setopt."); */
 	    tcp_deliver((tcp_descriptor *) desc, 0);
 	    return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
 	default:  
-	    /* fprintf(stderr,"Triggered tcp_recv by setopt.\r\n"); */
+	    /* fprintf(stderr,"Triggered tcp_recv by setopt."); */
 	    /*
 	     * Same as above, but active changed to once w/o header type
 	     * change, so try a read instead of just deliver. 
@@ -3238,7 +3252,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     case INET_REQ_GETSTATUS: {
 	char tbuf[4];
 
-	DEBUGF(("inet_ctl(%ld): GETSTATUS\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): GETSTATUS", (long)desc->port); 
 	put_int32(desc->state, tbuf);
 	return ctl_reply(INET_REP_OK, tbuf, 4, rbuf, rsize);
     }
@@ -3246,7 +3260,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     case INET_REQ_GETTYPE: {
 	char tbuf[8];
 
-	DEBUGF(("inet_ctl(%ld): GETTYPE\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): GETTYPE", (long)desc->port); 
 	if (desc->sfamily == AF_UNIX) {
 	    put_int32(INET_AF_UNIX, &tbuf[0]);   // yes, it is a funny name :-)
 	}
@@ -3277,7 +3291,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     case INET_REQ_GETFD: {
 	char tbuf[4];
 
-	DEBUGF(("inet_ctl(%ld): GETFD\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): GETFD", (long)desc->port); 
 	if (!IS_OPEN(desc))
 	    return ctl_error(EINVAL, rbuf, rsize);
 	put_int32((long)desc->s, tbuf);
@@ -3287,7 +3301,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     case INET_REQ_GETHOSTNAME: { /* get host name */
 	char tbuf[MAXHOSTNAMELEN];
 
-	DEBUGF(("inet_ctl(%ld): GETHOSTNAME\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): GETHOSTNAME", (long)desc->port); 
 	if (len != 0)
 	    return ctl_error(EINVAL, rbuf, rsize);
 
@@ -3302,7 +3316,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	inet_address* ptr;
 	unsigned int sz = sizeof(peer);
 
-	DEBUGF(("inet_ctl(%ld): PEER\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): PEER", (long)desc->port); 
 
 	if (!(desc->state & INET_F_ACTIVE))
 	    return ctl_error(ENOTCONN, rbuf, rsize);
@@ -3338,7 +3352,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	inet_address* ptr;
 	unsigned int sz = sizeof(name);
 
-	DEBUGF(("inet_ctl(%ld): NAME\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): NAME", (long)desc->port); 
 
 	if (!IS_BOUND(desc))
 	    return ctl_error(EINVAL, rbuf, rsize); /* address is not valid */
@@ -3370,11 +3384,9 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
     }
 
     case INET_REQ_BIND:  {      /* bind socket */
-	char tbuf[2];
 	inet_address local;
-	short port;
 
-	DEBUGF(("inet_ctl(%ld): BIND\r\n", (long)desc->port)); 
+	DEBUGF("inet_ctl(%ld): BIND", (long)desc->port); 
 
 	if (len < 2)
 	    return ctl_error(EINVAL, rbuf, rsize);
@@ -3388,20 +3400,12 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	    return ctl_error(sock_errno(), rbuf, rsize);
 
 	desc->state = INET_STATE_BOUND;
-
-	if ((port = inet_address_port(&local)) == 0) {
-	    SOCKLEN_T adrlen = sizeof(local);
-	    sock_name(desc->s, &local.sa, &adrlen);
-	    port = inet_address_port(&local);
-	}
-	port = sock_ntohs(port);
-	put_int16(port, tbuf);
-	return ctl_reply(INET_REP_OK, tbuf, 2, rbuf, rsize);
+	return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
     }
 
     case INET_REQ_IGNOREFD: {
-      DEBUGF(("inet_ctl(%ld): IGNOREFD, IGNORED = %d\r\n",
-	      (long)desc->port,(int)*buf));
+      DEBUGF("inet_ctl(%ld): IGNOREFD, IGNORED = %d",
+	      (long)desc->port,(int)*buf);
 
       /*
        * FD can only be ignored for connected TCP connections for now,
@@ -3546,8 +3550,8 @@ static int tcp_expand_buffer(tcp_descriptor* desc, int len)
 	return 0;
     }
 
-    DEBUGF(("tcp_expand_buffer(%ld): s=%d, from %ld to %d\r\n",
-	    (long)desc->inet.port, desc->inet.s, desc->i_buf->orig_size, ulen));
+    DEBUGF("tcp_expand_buffer(%ld): s=%d, from %ld to %d",
+	    (long)desc->inet.port, desc->inet.s, desc->i_buf->orig_size, ulen);
 
     offs1 = desc->i_ptr_start - desc->i_buf->orig_bytes;
     offs2 = desc->i_ptr - desc->i_ptr_start;
@@ -3628,7 +3632,7 @@ static void tcp_restart_input(tcp_descriptor* desc)
     if (desc->i_ptr_start != desc->i_buf->orig_bytes) {
 	int n = desc->i_ptr - desc->i_ptr_start;
 
-	DEBUGF(("tcp_restart_input: move %d bytes\r\n", n));
+	DEBUGF("tcp_restart_input: move %d bytes", n);
 	memmove(desc->i_buf->orig_bytes, desc->i_ptr_start, n);
 	desc->i_ptr_start = desc->i_buf->orig_bytes;
 	desc->i_ptr = desc->i_ptr_start + n;
@@ -3636,28 +3640,28 @@ static void tcp_restart_input(tcp_descriptor* desc)
 }
 
 
-static int tcp_inet_init(void)
+static int afunix_init(void)
 {
-    DEBUGF(("tcp_inet_init() {}\r\n"));
+    DEBUGF("afunix_init() {}");
     inet_init();
     return 0;
 }
 
-static void tcp_inet_finish(void)
+static void afunix_finish(void)
 {
     // nothing right now
 }
 
 /* initialize the TCP descriptor */
 
-static ErlDrvData tcp_inet_start(ErlDrvPort port, char* args)
+static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 {
     ErlDrvSizeT q_low, q_high;
     tcp_descriptor* desc;
-    DEBUGF(("tcp_inet_start(%ld) {\r\n", (long)port));
+    DEBUGF("afunix_start(%ld) {", (long)port);
 
     desc = (tcp_descriptor*)
-	inet_start(port, sizeof(tcp_descriptor), IPPROTO_TCP);
+	inet_start(port, sizeof(tcp_descriptor), 0);
     if (desc == NULL)
 	return ERL_DRV_ERROR_ERRNO;
     desc->high = INET_HIGH_WATERMARK;
@@ -3685,7 +3689,7 @@ static ErlDrvData tcp_inet_start(ErlDrvPort port, char* args)
     desc->http_state = 0;
     desc->mtd = NULL;
     desc->multi_first = desc->multi_last = NULL;
-    DEBUGF(("tcp_inet_start(%ld) }\r\n", (long)port));
+    DEBUGF("afunix_start(%ld) }", (long)port);
     return (ErlDrvData) desc;
 }
 
@@ -3693,14 +3697,14 @@ static ErlDrvData tcp_inet_start(ErlDrvPort port, char* args)
  * as the descriptor desc.
  * return NULL on error (SYSTEM_LIMIT no ports avail)
  */
-static tcp_descriptor* tcp_inet_copy(tcp_descriptor* desc,SOCKET s,
+static tcp_descriptor* afunix_copy(tcp_descriptor* desc,SOCKET s,
 				     ErlDrvTermData owner, int* err)
 {
     ErlDrvSizeT q_low, q_high;
     ErlDrvPort port = desc->inet.port;
     tcp_descriptor* copy_desc;
 
-    copy_desc = (tcp_descriptor*) tcp_inet_start(port, NULL);
+    copy_desc = (tcp_descriptor*) afunix_start(port, NULL);
 
     /* Setup event if needed */
     if ((copy_desc->inet.s = s) != INVALID_SOCKET) {
@@ -3789,18 +3793,18 @@ static void tcp_close_check(tcp_descriptor* desc)
 /*
 ** Cleanup & Free
 */
-static void tcp_inet_stop(ErlDrvData e)
+static void afunix_stop(ErlDrvData e)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
-    DEBUGF(("tcp_inet_stop(%ld) {s=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s));
+    DEBUGF("afunix_stop(%ld) {s=%d", 
+	    (long)desc->inet.port, desc->inet.s);
     tcp_close_check(desc);
     /* free input buffer & output buffer */
     if (desc->i_buf != NULL)
 	release_buffer(desc->i_buf);
     desc->i_buf = NULL; /* net_mess2 may call this function recursively when 
 			   faulty messages arrive on dist ports*/
-    DEBUGF(("tcp_inet_stop(%ld) }\r\n", (long)desc->inet.port));
+    DEBUGF("afunix_stop(%ld) }", (long)desc->inet.port);
     inet_stop(INETP(desc));
 }
 
@@ -3808,7 +3812,7 @@ static void tcp_inet_stop(ErlDrvData e)
     
 
 /* TCP requests from Erlang */
-static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
+static ErlDrvSSizeT afunix_ctl(ErlDrvData e, unsigned int cmd,
 				 char* buf, ErlDrvSizeT len,
 				 char** rbuf, ErlDrvSizeT rsize)
 {
@@ -3817,9 +3821,12 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
     switch(cmd) {
     case INET_REQ_OPEN: { /* open socket and return internal index */
 	int domain;
-	DEBUGF(("tcp_inet_ctl(%ld): OPEN\r\n", (long)desc->inet.port));
+	DEBUGF("afunix_ctl(%ld): OPEN", (long)desc->inet.port);
 	if (len != 2) return ctl_error(EINVAL, rbuf, rsize);
 	switch(buf[0]) {
+	case INET_AF_UNIX:
+	    domain = AF_UNIX;
+	    break;
 	case INET_AF_INET:
 	    domain = AF_INET;
 	    break;
@@ -3835,16 +3842,20 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	default:
 	    return ctl_error(EINVAL, rbuf, rsize);
 	}
-	if (buf[1] != INET_TYPE_STREAM) return ctl_error(EINVAL, rbuf, rsize);
+	if (buf[1] != INET_TYPE_STREAM) 
+	    return ctl_error(EINVAL, rbuf, rsize);
 	return inet_ctl_open(INETP(desc), domain, SOCK_STREAM, rbuf, rsize);
 	break;
     }
 
     case INET_REQ_FDOPEN: {  /* pass in an open socket */
 	int domain;
-	DEBUGF(("tcp_inet_ctl(%ld): FDOPEN\r\n", (long)desc->inet.port));
+	DEBUGF("afunix_ctl(%ld): FDOPEN", (long)desc->inet.port);
 	if (len != 6) return ctl_error(EINVAL, rbuf, rsize);
 	switch(buf[0]) {
+	case INET_AF_UNIX:
+	    domain = AF_UNIX;
+	    break;	    
 	case INET_AF_INET:
 	    domain = AF_INET;
 	    break;
@@ -3869,7 +3880,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
     case INET_REQ_LISTEN: { /* argument backlog */
 
 	int backlog;
-	DEBUGF(("tcp_inet_ctl(%ld): LISTEN\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): LISTEN", (long)desc->inet.port); 
 	if (desc->inet.state == INET_STATE_CLOSED)
 	    return ctl_xerror(EXBADPORT, rbuf, rsize);
 	if (!IS_OPEN(INETP(desc)))
@@ -3891,15 +3902,15 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	char tbuf[2];
 	unsigned timeout;
 
-	DEBUGF(("tcp_inet_ctl(%ld): CONNECT\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): CONNECT", (long)desc->inet.port); 
 	/* INPUT: Timeout(4), Port(2), Address(N) */
 
 	if (!IS_OPEN(INETP(desc)))
 	    return ctl_xerror(EXBADPORT, rbuf, rsize);
 	if (IS_CONNECTED(INETP(desc)))
 	    return ctl_error(EISCONN, rbuf, rsize);
-	if (!IS_BOUND(INETP(desc)))
-	    return ctl_xerror(EXBADSEQ, rbuf, rsize);
+//	if (!IS_BOUND(INETP(desc)))
+//	    return ctl_xerror(EXBADSEQ, rbuf, rsize);
 	if (IS_CONNECTING(INETP(desc)))
 	    return ctl_error(EINVAL, rbuf, rsize);
 	if (len < 6)
@@ -3942,7 +3953,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	unsigned int n;
 	SOCKET s;
 
-	DEBUGF(("tcp_inet_ctl(%ld): ACCEPT\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): ACCEPT", (long)desc->inet.port); 
 	/* INPUT: Timeout(4) */
 
 	if ((desc->inet.state != INET_STATE_LISTENING && desc->inet.state != INET_STATE_ACCEPTING &&
@@ -3974,12 +3985,12 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 		    time_left = 1;
 		}
 		omtd = add_multi_timer(&(desc->mtd), desc->inet.port, ocaller, 
-				       time_left, &tcp_inet_multi_timeout);
+				       time_left, &afunix_multi_timeout);
 	    }
 	    enq_old_multi_op(desc, oid, oreq, ocaller, omtd, &omonitor);
 	    if (timeout != INET_INFINITY) {
 		mtd = add_multi_timer(&(desc->mtd), desc->inet.port, caller, 
-				      timeout, &tcp_inet_multi_timeout);
+				      timeout, &afunix_multi_timeout);
 	    }
 	    enq_multi_op(desc, tbuf, INET_REQ_ACCEPT, caller, mtd, &monitor);
 	    desc->inet.state = INET_STATE_MULTI_ACCEPTING;
@@ -3994,7 +4005,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	    }
 	    if (timeout != INET_INFINITY) {
 		mtd = add_multi_timer(&(desc->mtd), desc->inet.port, caller, 
-				      timeout, &tcp_inet_multi_timeout);
+				      timeout, &afunix_multi_timeout);
 	    }
 	    enq_multi_op(desc, tbuf, INET_REQ_ACCEPT, caller, mtd, &monitor);
 	    return ctl_reply(INET_REP_OK, tbuf, 2, rbuf, rsize);
@@ -4022,7 +4033,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 		tcp_descriptor* accept_desc;
 		int err;
 		
-		if ((accept_desc = tcp_inet_copy(desc,s,caller,&err)) == NULL) {
+		if ((accept_desc = afunix_copy(desc,s,caller,&err)) == NULL) {
 		    sock_close(s);
 		    return ctl_error(err, rbuf, rsize);
 		}
@@ -4044,7 +4055,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	}
     }
     case INET_REQ_CLOSE:
-	DEBUGF(("tcp_inet_ctl(%ld): CLOSE\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): CLOSE", (long)desc->inet.port); 
 	tcp_close_check(desc);
 	erl_inet_close(INETP(desc));
 	return ctl_reply(INET_REP_OK, NULL, 0, rbuf, rsize);
@@ -4055,7 +4066,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	char tbuf[2];
 	int n;
 
-	DEBUGF(("tcp_inet_ctl(%ld): RECV\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): RECV", (long)desc->inet.port); 
 	/* INPUT: Timeout(4),  Length(4) */
 	if (!IS_CONNECTED(INETP(desc))) {
 	    if (desc->tcp_add_flags & TCP_ADDF_DELAYED_CLOSE_RECV) {
@@ -4070,8 +4081,8 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	timeout = get_int32(buf);
 	buf += 4;
 	n = get_int32(buf);
-	DEBUGF(("tcp_inet_ctl(%ld) timeout = %d, n = %d\r\n",
-		(long)desc->inet.port,timeout,n));
+	DEBUGF("afunix_ctl(%ld) timeout = %d, n = %d",
+		(long)desc->inet.port,timeout,n);
 	if ((desc->inet.htype != TCP_PB_RAW) && (n != 0))
 	    return ctl_error(EINVAL, rbuf, rsize);
 	if (n > TCP_MAX_PACKET_SIZE)
@@ -4093,7 +4104,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
     }
 
     case TCP_REQ_UNRECV: {
-	DEBUGF(("tcp_inet_ctl(%ld): UNRECV\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): UNRECV", (long)desc->inet.port); 
 	if (!IS_CONNECTED(INETP(desc)))
    	    return ctl_error(ENOTCONN, rbuf, rsize);
 	tcp_push_buffer(desc, buf, len);
@@ -4103,7 +4114,7 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
     }
     case TCP_REQ_SHUTDOWN: {
 	int how;
-	DEBUGF(("tcp_inet_ctl(%ld): FDOPEN\r\n", (long)desc->inet.port)); 
+	DEBUGF("afunix_ctl(%ld): FDOPEN", (long)desc->inet.port); 
 	if (!IS_CONNECTED(INETP(desc))) {
 	    return ctl_error(ENOTCONN, rbuf, rsize);
 	}
@@ -4118,14 +4129,14 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 	}
     }
     default:
-	DEBUGF(("tcp_inet_ctl(%ld): %u\r\n", (long)desc->inet.port, cmd)); 
+	DEBUGF("afunix_ctl(%ld): %u", (long)desc->inet.port, cmd); 
 	return inet_ctl(INETP(desc), cmd, buf, len, rbuf, rsize);
     }
 
 }
 
 /*
-** tcp_inet_timeout:
+** afunix_timeout:
 ** called when timer expire:
 ** TCP socket may be:
 **
@@ -4135,13 +4146,13 @@ static ErlDrvSSizeT tcp_inet_ctl(ErlDrvData e, unsigned int cmd,
 **
 */
 
-static void tcp_inet_timeout(ErlDrvData e)
+static void afunix_timeout(ErlDrvData e)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     int state = desc->inet.state;
 
-    DEBUGF(("tcp_inet_timeout(%ld) {s=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s)); 
+    DEBUGF("afunix_timeout(%ld) {s=%d", 
+	    (long)desc->inet.port, desc->inet.s); 
     if ((state & INET_F_MULTI_CLIENT)) { /* Multi-client always means multi-timers */
 	fire_multi_timers(&(desc->mtd), desc->inet.port, e);
     } else if ((state & INET_STATE_CONNECTED) == INET_STATE_CONNECTED) {
@@ -4178,10 +4189,10 @@ static void tcp_inet_timeout(ErlDrvData e)
 	desc->inet.state = INET_STATE_LISTENING;
 	async_error_am(INETP(desc), am_timeout);
     }
-    DEBUGF(("tcp_inet_timeout(%ld) }\r\n", (long)desc->inet.port)); 
+    DEBUGF("afunix_timeout(%ld) }", (long)desc->inet.port); 
 }
 
-static void tcp_inet_multi_timeout(ErlDrvData e, ErlDrvTermData caller)
+static void afunix_multi_timeout(ErlDrvData e, ErlDrvTermData caller)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     int id,req;
@@ -4205,32 +4216,32 @@ static void tcp_inet_multi_timeout(ErlDrvData e, ErlDrvTermData caller)
 **   output on a socket only !
 **   a reply code will be sent to connected (caller later)
 **   {inet_reply, S, Status}
-** NOTE! normal sockets use the the tcp_inet_commandv
-** but distribution still uses the tcp_inet_command!!
+** NOTE! normal sockets use the the afunix_commandv
+** but distribution still uses the afunix_command!!
 */
 
-static void tcp_inet_command(ErlDrvData e, char *buf, ErlDrvSizeT len)
+static void afunix_command(ErlDrvData e, char *buf, ErlDrvSizeT len)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     desc->inet.caller = driver_caller(desc->inet.port);
 
-    DEBUGF(("tcp_inet_command(%ld) {s=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s)); 
+    DEBUGF("afunix_command(%ld) {s=%d", 
+	    (long)desc->inet.port, desc->inet.s); 
     if (!IS_CONNECTED(INETP(desc)))
 	inet_reply_error(INETP(desc), ENOTCONN);
     else if (tcp_send(desc, buf, len) == 0)
 	inet_reply_ok(INETP(desc));
-    DEBUGF(("tcp_inet_command(%ld) }\r\n", (long)desc->inet.port)); 
+    DEBUGF("afunix_command(%ld) }", (long)desc->inet.port); 
 }
 
 
-static void tcp_inet_commandv(ErlDrvData e, ErlIOVec* ev)
+static void afunix_commandv(ErlDrvData e, ErlIOVec* ev)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     desc->inet.caller = driver_caller(desc->inet.port);
 
-    DEBUGF(("tcp_inet_commanv(%ld) {s=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s)); 
+    DEBUGF("afunix_commanv(%ld) {s=%d", 
+	    (long)desc->inet.port, desc->inet.s); 
     if (!IS_CONNECTED(INETP(desc))) {
 	if (desc->tcp_add_flags & TCP_ADDF_DELAYED_CLOSE_SEND) {
 	    desc->tcp_add_flags &= ~TCP_ADDF_DELAYED_CLOSE_SEND;
@@ -4241,10 +4252,10 @@ static void tcp_inet_commandv(ErlDrvData e, ErlIOVec* ev)
     }
     else if (tcp_sendv(desc, ev) == 0)
 	inet_reply_ok(INETP(desc));
-    DEBUGF(("tcp_inet_commandv(%ld) }\r\n", (long)desc->inet.port)); 
+    DEBUGF("afunix_commandv(%ld) }", (long)desc->inet.port); 
 }
     
-static void tcp_inet_flush(ErlDrvData e)
+static void afunix_flush(ErlDrvData e)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     if (!(desc->inet.event_mask & FD_WRITE)) {
@@ -4253,7 +4264,7 @@ static void tcp_inet_flush(ErlDrvData e)
     }
 }
 
-static void tcp_inet_process_exit(ErlDrvData e, ErlDrvMonitor *monitorp) 
+static void afunix_process_exit(ErlDrvData e, ErlDrvMonitor *monitorp) 
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
     ErlDrvTermData who = driver_get_monitored_process(desc->inet.port,monitorp);
@@ -4290,11 +4301,10 @@ static void inet_stop_select(ErlDrvEvent event, void* _)
 /* The peer socket has closed, cleanup and send event */
 static int tcp_recv_closed(tcp_descriptor* desc)
 {
-#ifdef DEBUG
     long port = (long) desc->inet.port; /* Used after driver_exit() */
-#endif
-    DEBUGF(("tcp_recv_closed(%ld): s=%d, in %s, line %d\r\n",
-	    port, desc->inet.s, __FILE__, __LINE__));
+
+    DEBUGF("tcp_recv_closed(%ld): s=%d, in %s, line %d",
+	   port, desc->inet.s, __FILE__, __LINE__);
     if (IS_BUSY(INETP(desc))) {
 	/* A send is blocked */
 	desc->inet.caller = desc->inet.busy_caller;
@@ -4302,12 +4312,12 @@ static int tcp_recv_closed(tcp_descriptor* desc)
 	if (desc->busy_on_send) {
 	    driver_cancel_timer(desc->inet.port);
 	    desc->busy_on_send = 0;
-	    DEBUGF(("tcp_recv_closed(%ld): busy on send\r\n", port));
+	    DEBUGF("tcp_recv_closed(%ld): busy on send", port);
 	}
 	desc->inet.state &= ~INET_F_BUSY;
 	set_busy_port(desc->inet.port, 0);
 	inet_reply_error_am(INETP(desc), am_closed);
-	DEBUGF(("tcp_recv_closed(%ld): busy reply 'closed'\r\n", port));
+	DEBUGF("tcp_recv_closed(%ld): busy reply 'closed'", port);
     }
     if (!desc->inet.active) {
 	/* We must cancel any timer here ! */
@@ -4322,7 +4332,7 @@ static int tcp_recv_closed(tcp_descriptor* desc)
 	}
 	async_error_am_all(INETP(desc), am_closed);
 	/* next time EXBADSEQ will be delivered  */
-	DEBUGF(("tcp_recv_closed(%ld): passive reply all 'closed'\r\n", port));
+	DEBUGF("tcp_recv_closed(%ld): passive reply all 'closed'", port);
     } else {
 	tcp_clear_input(desc);
 	tcp_closed_message(desc);
@@ -4331,9 +4341,9 @@ static int tcp_recv_closed(tcp_descriptor* desc)
 	} else {
 	    desc_close_read(INETP(desc));
 	}
-	DEBUGF(("tcp_recv_closed(%ld): active close\r\n", port));
+	DEBUGF("tcp_recv_closed(%ld): active close", port);
     }
-    DEBUGF(("tcp_recv_closed(%ld): done\r\n", port));
+    DEBUGF("tcp_recv_closed(%ld): done", port);
     return -1;
 }
 
@@ -4401,8 +4411,8 @@ static int tcp_remain(tcp_descriptor* desc, int* len)
     int n = desc->i_ptr - ptr;  /* number of bytes read */
     int tlen;
 
-    DEBUGF(("tcp_remain(%ld): s=%d, n=%d, nfill=%d nsz=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s, n, nfill, nsz));
+    DEBUGF("tcp_remain(%ld): s=%d, n=%d, nfill=%d nsz=%d", 
+	    (long)desc->inet.port, desc->inet.s, n, nfill, nsz);
 
     tlen = packet_get_length(desc->inet.htype, ptr, n, 
                              desc->inet.psize, desc->i_bufsz,
@@ -4410,14 +4420,14 @@ static int tcp_remain(tcp_descriptor* desc, int* len)
     if (tlen > 0) {
         if (tlen <= n) { /* got a packet */
             *len = tlen;
-            DEBUGF((" => nothing remain packet=%d\r\n", tlen));
+            DEBUGF(" => nothing remain packet=%d", tlen);
             return 0;
         }
         else { /* need known more */
             if (tcp_expand_buffer(desc, tlen) < 0)
                 return -1;
             *len = tlen - n;
-            DEBUGF((" => remain=%d\r\n", *len));
+            DEBUGF(" => remain=%d", *len);
             return *len;
         }
     }
@@ -4433,17 +4443,17 @@ static int tcp_remain(tcp_descriptor* desc, int* len)
                 else
                     goto error;
             }
-            DEBUGF((" => restart more=%d\r\n", nfill - n));
+            DEBUGF(" => restart more=%d", nfill - n);
             return nfill - n;
         }
         else {
-            DEBUGF((" => more=%d \r\n", nsz));
+            DEBUGF(" => more=%d ", nsz);
             return nsz;
         }	    
     }
 
 error:
-    DEBUGF((" => packet error\r\n"));
+    DEBUGF(" => packet error");
     return -1;
 }
 
@@ -4582,32 +4592,32 @@ static int tcp_recv(tcp_descriptor* desc, int request_len)
     else  /* remain already set use it */
 	nread = desc->i_remain;
     
-    DEBUGF(("tcp_recv(%ld): s=%d about to read %d bytes...\r\n",  
-	    (long)desc->inet.port, desc->inet.s, nread));
+    DEBUGF("tcp_recv(%ld): s=%d about to read %d bytes...",  
+	    (long)desc->inet.port, desc->inet.s, nread);
 
     n = sock_recv(desc->inet.s, desc->i_ptr, nread, 0);
 
     if (IS_SOCKET_ERROR(n)) {
 	int err = sock_errno();
 	if (err == ECONNRESET) {
-	    DEBUGF((" => detected close (connreset)\r\n"));
+	    DEBUGF(" => detected close (connreset)");
 	    return tcp_recv_closed(desc);
 	}
 	if (err == ERRNO_BLOCK) {
-	    DEBUGF((" => would block\r\n"));
+	    DEBUGF(" => would block");
 	    return 0;
 	}
 	else {
-	    DEBUGF((" => error: %d\r\n", err));
+	    DEBUGF(" => error: %d", err);
 	    return tcp_recv_error(desc, err);
 	}
     }
     else if (n == 0) {
-	DEBUGF(("  => detected close\r\n"));
+	DEBUGF("  => detected close");
 	return tcp_recv_closed(desc);
     }
 
-    DEBUGF((" => got %d bytes\r\n", n));
+    DEBUGF(" => got %d bytes", n);
     desc->i_ptr += n;
     if (desc->i_remain > 0) {
 	desc->i_remain -= n;
@@ -4629,14 +4639,13 @@ static int tcp_recv(tcp_descriptor* desc, int request_len)
 ** 1. INET_STATE_ACCEPTING  => non block accept ?
 ** 2. INET_STATE_CONNECTED => read input
 */
-static int tcp_inet_input(tcp_descriptor* desc, HANDLE event)
+static int afunix_input(tcp_descriptor* desc, HANDLE event)
 {
     int ret = 0;
-#ifdef DEBUG
     long port = (long) desc->inet.port;  /* Used after driver_exit() */
-#endif
-    DEBUGF(("tcp_inet_input(%ld) {s=%d\r\n", port, desc->inet.s));
-    /* XXX fprintf(stderr,"tcp_inet_input(%ld) {s=%d}\r\n",(long) desc->inet.port, desc->inet.s); */
+
+    DEBUGF("afunix_input(%ld) {s=%d", port, desc->inet.s);
+    /* XXX fprintf(stderr,"afunix_input(%ld) {s=%d}",(long) desc->inet.port, desc->inet.s); */
     if (desc->inet.state == INET_STATE_ACCEPTING) {
 	SOCKET s;
 	unsigned int len;
@@ -4677,7 +4686,7 @@ static int tcp_inet_input(tcp_descriptor* desc, HANDLE event)
 		goto done;
 	    }
 	    caller = desc->inet.opt->caller;
-	    if ((accept_desc = tcp_inet_copy(desc,s,caller,&err)) == NULL) {
+	    if ((accept_desc = afunix_copy(desc,s,caller,&err)) == NULL) {
 		sock_close(s);
 		ret = async_error(INETP(desc), err);
 		goto done;
@@ -4715,7 +4724,7 @@ static int tcp_inet_input(tcp_descriptor* desc, HANDLE event)
 	    }
 #ifdef HARDDEBUG
 	    if (++times > 1) {
-		erts_fprintf(stderr,"Accepts in one suite: %d :-)\r\n",times);
+		erts_fprintf(stderr,"Accepts in one suite: %d :-)",times);
 	    }
 #endif
 	    if (deq_multi_op(desc,&id,&req,&caller,&timeout,&monitor) != 0) {
@@ -4744,7 +4753,7 @@ static int tcp_inet_input(tcp_descriptor* desc, HANDLE event)
 		tcp_descriptor* accept_desc;
 		int err;
 		
-		if ((accept_desc = tcp_inet_copy(desc,s,caller,&err)) == NULL) {
+		if ((accept_desc = afunix_copy(desc,s,caller,&err)) == NULL) {
 		    sock_close(s);
 		    ret = send_async_error(&desc->inet, 
 					   id, caller, error_atom(err));
@@ -4765,11 +4774,11 @@ static int tcp_inet_input(tcp_descriptor* desc, HANDLE event)
     else {
 	/* maybe a close op from connection attempt?? */
 	sock_select(INETP(desc),FD_ACCEPT,0);
-	DEBUGF(("tcp_inet_input(%ld): s=%d bad state: %04x\r\n", 
-		port, desc->inet.s, desc->inet.state));
+	DEBUGF("afunix_input(%ld): s=%d bad state: %04x", 
+		port, desc->inet.s, desc->inet.state);
     }
  done:
-    DEBUGF(("tcp_inet_input(%ld) }\r\n", port));
+    DEBUGF("afunix_input(%ld) }", port);
     return ret;
 }
 
@@ -4793,8 +4802,8 @@ static int tcp_send_error(tcp_descriptor* desc, int err)
      * Now we handle all errors in the same way. We just have to distinguish
      * between passive and active sockets.
      */
-    DEBUGF(("driver_failure_eof(%ld) in %s, line %d\r\n",
-	    (long)desc->inet.port, __FILE__, __LINE__));
+    DEBUGF("driver_failure_eof(%ld) in %s, line %d",
+	    (long)desc->inet.port, __FILE__, __LINE__);
     if (desc->inet.active) {
 	tcp_closed_message(desc);
 	inet_reply_error_am(INETP(desc), am_closed);
@@ -4873,8 +4882,8 @@ static int tcp_sendv(tcp_descriptor* desc, ErlIOVec* ev)
     if ((sz = driver_sizeq(ix)) > 0) {
 	driver_enqv(ix, ev, 0);
 	if (sz+ev->size >= desc->high) {
-	    DEBUGF(("tcp_sendv(%ld): s=%d, sender forced busy\r\n",
-		    (long)desc->inet.port, desc->inet.s));
+	    DEBUGF("tcp_sendv(%ld): s=%d, sender forced busy",
+		    (long)desc->inet.port, desc->inet.s);
 	    desc->inet.state |= INET_F_BUSY;  /* mark for low-watermark */
 	    desc->inet.busy_caller = desc->inet.caller;
 	    set_busy_port(desc->inet.port, 1);
@@ -4888,8 +4897,8 @@ static int tcp_sendv(tcp_descriptor* desc, ErlIOVec* ev)
     else {
 	int vsize = (ev->vsize > MAX_VSIZE) ? MAX_VSIZE : ev->vsize;
 	
-	DEBUGF(("tcp_sendv(%ld): s=%d, about to send "LLU","LLU" bytes\r\n",
-		(long)desc->inet.port, desc->inet.s, (llu_t)h_len, (llu_t)len));
+	DEBUGF("tcp_sendv(%ld): s=%d, about to send "LLU","LLU" bytes",
+		(long)desc->inet.port, desc->inet.s, (llu_t)h_len, (llu_t)len);
 
 	if (INETP(desc)->is_ignored) {
 	    INETP(desc)->is_ignored |= INET_IGNORE_WRITE;
@@ -4900,9 +4909,9 @@ static int tcp_sendv(tcp_descriptor* desc, ErlIOVec* ev)
 					      vsize, &n, 0))) {
 	    if ((sock_errno() != ERRNO_BLOCK) && (sock_errno() != EINTR)) {
 		int err = sock_errno();
-		DEBUGF(("tcp_sendv(%ld): s=%d, "
-			"sock_sendv(size=2) errno = %d\r\n",
-			(long)desc->inet.port, desc->inet.s, err));
+		DEBUGF("tcp_sendv(%ld): s=%d, "
+			"sock_sendv(size=2) errno = %d",
+			(long)desc->inet.port, desc->inet.s, err);
 		return tcp_send_error(desc, err);
 	    }
 	    n = 0;
@@ -4911,14 +4920,14 @@ static int tcp_sendv(tcp_descriptor* desc, ErlIOVec* ev)
 	    return 0;
 	}
 	else {
-	    DEBUGF(("tcp_sendv(%ld): s=%d, only sent "
-		    LLU"/%d of "LLU"/%d bytes/items\r\n",
+	    DEBUGF("tcp_sendv(%ld): s=%d, only sent "
+		    LLU"/%d of "LLU"/%d bytes/items",
 		    (long)desc->inet.port, desc->inet.s,
-		    (llu_t)n, vsize, (llu_t)ev->size, ev->vsize));
+		    (llu_t)n, vsize, (llu_t)ev->size, ev->vsize);
 	}
 
-	DEBUGF(("tcp_sendv(%ld): s=%d, Send failed, queuing\r\n", 
-		(long)desc->inet.port, desc->inet.s));
+	DEBUGF("tcp_sendv(%ld): s=%d, Send failed, queuing", 
+		(long)desc->inet.port, desc->inet.s);
 	driver_enqv(ix, ev, n); 
 	if (!INETP(desc)->is_ignored)
 	    sock_select(INETP(desc),(FD_WRITE|FD_CLOSE), 1);
@@ -4966,8 +4975,8 @@ static int tcp_send(tcp_descriptor* desc, char* ptr, ErlDrvSizeT len)
 	    driver_enq(ix, buf, h_len);
 	driver_enq(ix, ptr, len);
 	if (sz+h_len+len >= desc->high) {
-	    DEBUGF(("tcp_send(%ld): s=%d, sender forced busy\r\n",
-		    (long)desc->inet.port, desc->inet.s));
+	    DEBUGF("tcp_send(%ld): s=%d, sender forced busy",
+		    (long)desc->inet.port, desc->inet.s);
 	    desc->inet.state |= INET_F_BUSY;  /* mark for low-watermark */
 	    desc->inet.busy_caller = desc->inet.caller;
 	    set_busy_port(desc->inet.port, 1);
@@ -4984,8 +4993,8 @@ static int tcp_send(tcp_descriptor* desc, char* ptr, ErlDrvSizeT len)
 	iov[1].iov_base = ptr;
 	iov[1].iov_len = len;
 
-	DEBUGF(("tcp_send(%ld): s=%d, about to send "LLU","LLU" bytes\r\n",
-		(long)desc->inet.port, desc->inet.s, (llu_t)h_len, (llu_t)len));
+	DEBUGF("tcp_send(%ld): s=%d, about to send "LLU","LLU" bytes",
+		(long)desc->inet.port, desc->inet.s, (llu_t)h_len, (llu_t)len);
 	if (INETP(desc)->is_ignored) {
 	    INETP(desc)->is_ignored |= INET_IGNORE_WRITE;
 	    n = 0;
@@ -4995,8 +5004,8 @@ static int tcp_send(tcp_descriptor* desc, char* ptr, ErlDrvSizeT len)
 	} else 	if (IS_SOCKET_ERROR(sock_sendv(desc->inet.s,iov,2,&n,0))) {
 	    if ((sock_errno() != ERRNO_BLOCK) && (sock_errno() != EINTR)) {
 		int err = sock_errno();
-		DEBUGF(("tcp_send(%ld): s=%d,sock_sendv(size=2) errno = %d\r\n",
-			(long)desc->inet.port, desc->inet.s, err));
+		DEBUGF("tcp_send(%ld): s=%d,sock_sendv(size=2) errno = %d",
+			(long)desc->inet.port, desc->inet.s, err);
 		return tcp_send_error(desc, err);
 	    }
 	    n = 0;
@@ -5005,8 +5014,8 @@ static int tcp_send(tcp_descriptor* desc, char* ptr, ErlDrvSizeT len)
 	    return 0;
 	}
 
-	DEBUGF(("tcp_send(%ld): s=%d, Send failed, queuing", 
-		(long)desc->inet.port, desc->inet.s));
+	DEBUGF("tcp_send(%ld): s=%d, Send failed, queuing", 
+		(long)desc->inet.port, desc->inet.s);
 
 	if (n < h_len) {
 	    driver_enq(ix, buf+n, h_len-n);
@@ -5022,27 +5031,27 @@ static int tcp_send(tcp_descriptor* desc, char* ptr, ErlDrvSizeT len)
     return 0;
 }
 
-static void tcp_inet_drv_output(ErlDrvData data, ErlDrvEvent event)
+static void afunix_drv_output(ErlDrvData data, ErlDrvEvent event)
 {
-    (void)tcp_inet_output((tcp_descriptor*)data, (HANDLE)event);
+    (void)afunix_output((tcp_descriptor*)data, (HANDLE)event);
 }
 
-static void tcp_inet_drv_input(ErlDrvData data, ErlDrvEvent event)
+static void afunix_drv_input(ErlDrvData data, ErlDrvEvent event)
 {
-    (void)tcp_inet_input((tcp_descriptor*)data, (HANDLE)event);
+    (void)afunix_input((tcp_descriptor*)data, (HANDLE)event);
 }
 
 /* socket ready for ouput:
 ** 1. INET_STATE_CONNECTING => non block connect ?
 ** 2. INET_STATE_CONNECTED  => write output
 */
-static int tcp_inet_output(tcp_descriptor* desc, HANDLE event)
+static int afunix_output(tcp_descriptor* desc, HANDLE event)
 {
     int ret = 0;
     ErlDrvPort ix = desc->inet.port;
 
-    DEBUGF(("tcp_inet_output(%ld) {s=%d\r\n", 
-	    (long)desc->inet.port, desc->inet.s));
+    DEBUGF("afunix_output(%ld) {s=%d", 
+	    (long)desc->inet.port, desc->inet.s);
     if (desc->inet.state == INET_STATE_CONNECTING) {
 	sock_select(INETP(desc),FD_CONNECT,0);
 
@@ -5101,13 +5110,13 @@ static int tcp_inet_output(tcp_descriptor* desc, HANDLE event)
 		goto done;
 	    }
 	    vsize = vsize > MAX_VSIZE ? MAX_VSIZE : vsize;
-	    DEBUGF(("tcp_inet_output(%ld): s=%d, About to send %d items\r\n", 
-		    (long)desc->inet.port, desc->inet.s, vsize));
+	    DEBUGF("afunix_output(%ld): s=%d, About to send %d items", 
+		    (long)desc->inet.port, desc->inet.s, vsize);
 	    if (IS_SOCKET_ERROR(sock_sendv(desc->inet.s, iov, vsize, &n, 0))) {
 	    write_error:
 		if ((sock_errno() != ERRNO_BLOCK) && (sock_errno() != EINTR)) {
-		    DEBUGF(("tcp_inet_output(%ld): sock_sendv(%d) errno = %d\r\n",
-			    (long)desc->inet.port, vsize, sock_errno()));
+		    DEBUGF("afunix_output(%ld): sock_sendv(%d) errno = %d",
+			    (long)desc->inet.port, vsize, sock_errno());
 		    ret =  tcp_send_error(desc, sock_errno());
 		    goto done;
 		}
@@ -5146,11 +5155,11 @@ static int tcp_inet_output(tcp_descriptor* desc, HANDLE event)
     }
     else {
 	sock_select(INETP(desc),FD_CONNECT,0);
-	DEBUGF(("tcp_inet_output(%ld): bad state: %04x\r\n", 
-		(long)desc->inet.port, desc->inet.state));
+	DEBUGF("afunix_output(%ld): bad state: %04x", 
+		(long)desc->inet.port, desc->inet.state);
     }
  done:
-    DEBUGF(("tcp_inet_output(%ld) }\r\n", (long)desc->inet.port));
+    DEBUGF("afunix_output(%ld) }", (long)desc->inet.port);
     return ret;
 }
 
@@ -5160,43 +5169,6 @@ static int tcp_inet_output(tcp_descriptor* desc, HANDLE event)
 
 -----------------------------------------------------------------------------*/
 
-#if defined(HAVE_SO_BSDCOMPAT)
-#if defined(__linux__)
-#include <sys/utsname.h>
-static int should_use_so_bsdcompat(void)
-{
-    /* SMP: FIXME this is probably not SMP safe but may be ok anyway? */
-    static int init_done;
-    static int so_bsdcompat_is_obsolete;
-
-    if (!init_done) {
-	struct utsname utsname;
-	unsigned int version, patchlevel;
-
-	init_done = 1;
-	if (uname(&utsname) < 0) {
-	    fprintf(stderr, "uname: %s\r\n", strerror(sock_errno()));
-	    return 1;
-	}
-	/* Format is <version>.<patchlevel>.<sublevel><extraversion>
-	   where the first three are unsigned integers and the last
-	   is an arbitrary string. We only care about the first two. */
-	if (sscanf(utsname.release, "%u.%u", &version, &patchlevel) != 2) {
-	    fprintf(stderr, "uname: unexpected release '%s'\r\n",
-		    utsname.release);
-	    return 1;
-	}
-	/* SO_BSDCOMPAT is deprecated and triggers warnings in 2.5
-	   kernels. It is a no-op in 2.4 but not in 2.2 kernels. */
-	if (version > 2 || (version == 2 && patchlevel >= 5))
-	    so_bsdcompat_is_obsolete = 1;
-    }
-    return !so_bsdcompat_is_obsolete;
-}
-#else	/* __linux__ */
-#define should_use_so_bsdcompat() 1
-#endif	/* __linux__ */
-#endif	/* HAVE_SO_BSDCOMPAT */
 
 static void absolute_timeout(unsigned millis, ErlDrvNowData *out)
 {
@@ -5490,25 +5462,28 @@ DRIVER_INIT(afunix_drv)
 {
     ErlDrvEntry* ptr = &afunix_driver_entry;
 
-    DEBUGF(("afunix_drv DRIVER_INIT\r\n"));
+    // set_debug(DLOG_DEBUG);
+    set_debug(DLOG_NONE);
 
-    ptr->init  = tcp_inet_init;
-    ptr->start = tcp_inet_start;
-    ptr->stop  = tcp_inet_stop;
-    ptr->output = tcp_inet_command;
-    ptr->outputv = tcp_inet_commandv;
-    ptr->ready_input  = tcp_inet_drv_input;
-    ptr->ready_output = tcp_inet_drv_output;
-    ptr->finish = tcp_inet_finish;
+    DEBUGF("afunix_drv DRIVER_INIT");
+
+    ptr->init  = afunix_init;
+    ptr->start = afunix_start;
+    ptr->stop  = afunix_stop;
+    ptr->output = afunix_command;
+    ptr->outputv = afunix_commandv;
+    ptr->ready_input  = afunix_drv_input;
+    ptr->ready_output = afunix_drv_output;
+    ptr->finish = afunix_finish;
     ptr->driver_name = "afunix_drv";
-    ptr->control = tcp_inet_ctl;
-    ptr->timeout = tcp_inet_timeout;
-    ptr->flush   = tcp_inet_flush;
+    ptr->control = afunix_ctl;
+    ptr->timeout = afunix_timeout;
+    ptr->flush   = afunix_flush;
     ptr->extended_marker = ERL_DRV_EXTENDED_MARKER;
     ptr->major_version = ERL_DRV_EXTENDED_MAJOR_VERSION;
     ptr->minor_version = ERL_DRV_EXTENDED_MINOR_VERSION;
     ptr->driver_flags = ERL_DRV_FLAG_USE_PORT_LOCKING;
-    ptr->process_exit = tcp_inet_process_exit;
+    ptr->process_exit = afunix_process_exit;
     ptr->stop_select = inet_stop_select;
     return ptr;
 }

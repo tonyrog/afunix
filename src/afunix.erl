@@ -17,31 +17,34 @@
 %% %CopyrightEnd%
 %%
 -module(afunix).
-
+-compile(export_all).
 %% Socket server for TCP/IP
-
--export([connect/3, connect/4, listen/2, accept/1, accept/2, close/1]).
+-export([connect/2, connect/3, listen/2, accept/1, accept/2, close/1]).
 -export([send/2, send/3, recv/2, recv/3, unrecv/2]).
 -export([shutdown/2]).
 -export([controlling_process/2]).
 -export([fdopen/2]).
 
--export([getserv/1, getaddr/1, getaddr/2, getaddrs/1, getaddrs/2]).
-
-
 -include_lib("kernel/src/inet_int.hrl").
 
-%% inet_tcp port lookup
-getserv(Port) when is_integer(Port) -> {ok, Port};
-getserv(Name) when is_atom(Name)    -> inet:getservbyname(Name,tcp).
+-define(INET_AF_UNIX, 5).
 
-%% inet_tcp address lookup
-getaddr(Address) -> inet:getaddr(Address, inet).
-getaddr(Address,Timer) -> inet:getaddr_tm(Address, inet, Timer).
+%-define(DEBUG, 1).
+-ifdef(DEBUG).
+-define(DBG_FORMAT(Format, Args), (io:format((Format), (Args)))).
+-else.
+-define(DBG_FORMAT(Format, Args), ok).
+-endif.
 
-%% inet_tcp address lookup
-getaddrs(Address) -> inet:getaddrs(Address, inet).
-getaddrs(Address,Timer) -> inet:getaddrs_tm(Address,inet,Timer).
+load(Driver) ->
+    Path = code:priv_dir(afunix),
+    case erl_ddll:load(Path, Driver) of
+	ok -> 
+	    ok;
+	Err={error,Error} ->
+	    io:format("Error: ~s\n", [erl_ddll:format_error_int(Error)]),
+	    Err
+    end.
     
 %%
 %% Send data on a socket
@@ -78,46 +81,40 @@ controlling_process(Socket, NewOwner) ->
 %%
 %% Connect
 %%
-connect(Address, Port, Opts) ->
-    do_connect(Address, Port, Opts, infinity).
+connect(Name, Opts) ->
+    do_connect(Name, Opts, infinity).
 
-connect(Address, Port, Opts, infinity) ->
-    do_connect(Address, Port, Opts, infinity);
-connect(Address, Port, Opts, Timeout) when is_integer(Timeout), 
+connect(Name, Opts, infinity) ->
+    do_connect(Name, Opts, infinity);
+connect(Name, Opts, Timeout) when is_integer(Timeout), 
                                            Timeout >= 0 ->
-    do_connect(Address, Port, Opts, Timeout).
+    do_connect(Name, Opts, Timeout).
 
-do_connect({A,B,C,D}, Port, Opts, Time) when ?ip(A,B,C,D), ?port(Port) ->
+do_connect(Name, Opts, Time) when is_list(Name) ->
     case inet:connect_options(Opts, inet) of
 	{error, Reason} -> exit(Reason);
 	{ok, #connect_opts{fd=Fd,
-			   ifaddr=BAddr={Ab,Bb,Cb,Db},
-			   port=BPort,
-			   opts=SockOpts}}
-	when ?ip(Ab,Bb,Cb,Db), ?port(BPort) ->
-	    case inet:open(Fd,BAddr,BPort,SockOpts,tcp,inet,stream,?MODULE) of
+			   opts=SockOpts}} ->
+	    case open(Fd,"",SockOpts,unix,afunix,stream,?MODULE) of
 		{ok, S} ->
-		    case prim_inet:connect(S, {A,B,C,D}, Port, Time) of
+		    case prim_connect(S, Name, Time) of
 			ok    -> {ok,S};
 			Error ->  prim_inet:close(S), Error
 		    end;
 		Error -> Error
-	    end;
-	{ok, _} -> exit(badarg)
+	    end
     end.
 
 %% 
 %% Listen
 %%
-listen(Port, Opts) ->
-    case inet:listen_options([{port,Port} | Opts], inet) of
+listen(Name, Opts) when is_list(Name) ->  %% or binary?
+    case inet:listen_options(Opts, inet) of
 	{error,Reason} -> exit(Reason);
 	{ok, #listen_opts{fd=Fd,
-			  ifaddr=BAddr={A,B,C,D},
-			  port=BPort,
-			  opts=SockOpts}=R}
-	when ?ip(A,B,C,D), ?port(BPort) ->
-	    case inet:open(Fd,BAddr,BPort,SockOpts,tcp,inet,stream,?MODULE) of
+			  opts=SockOpts}=R} ->
+	    %% unlink Name!!?
+	    case open(Fd,Name,SockOpts,unix,afunix,stream,?MODULE) of
 		{ok, S} ->
 		    case prim_inet:listen(S, R#listen_opts.backlog) of
 			ok -> {ok, S};
@@ -131,7 +128,7 @@ listen(Port, Opts) ->
 %%
 %% Accept
 %%
-accept(L)         -> 
+accept(L) -> 
     case prim_inet:accept(L) of
 	{ok, S} ->
 	    inet_db:register_socket(S, ?MODULE),
@@ -150,4 +147,140 @@ accept(L,Timeout) ->
 %% Create a port/socket from a file descriptor 
 %%
 fdopen(Fd, Opts) ->
-    inet:fdopen(Fd, Opts, tcp, inet, stream, ?MODULE).
+    fdopen(Fd, Opts, unix, afunix, stream, ?MODULE).
+
+
+fdopen(Fd, Opts, Protocol, Family, Type, Module) ->
+    case prim_fdopen(Protocol, Family, Type, Fd) of
+	{ok, S} ->
+	    case prim_inet:setopts(S, Opts) of
+		ok ->
+		    inet_db:register_socket(S, Module),
+		    {ok, S};
+		Error ->
+		    prim_inet:close(S), Error
+	    end;
+	Error -> Error
+    end.
+
+open(Fd, Name, Opts, Protocol, Family, Type, Module) when Fd < 0 ->
+    case prim_open(Protocol, Family, Type) of
+	{ok,S} ->
+	    case prim_inet:setopts(S, Opts) of
+		ok ->
+		    case prim_bind(S, Name) of
+			{ok, _} -> 
+			    inet_db:register_socket(S, Module),
+			    {ok,S};
+			Error  ->
+			    prim_inet:close(S),
+			    Error
+		    end;
+		Error  ->
+		    prim_inet:close(S),
+		    Error
+	    end;
+	Error ->
+	    Error
+    end;
+open(Fd, _Name, Opts, Protocol, Family, Type, Module) ->
+    fdopen(Fd, Opts, Protocol, Family, Type, Module).
+
+
+prim_open(Protocol, Family, Type) ->
+    open0(Protocol, Family, Type, ?INET_REQ_OPEN, []).
+
+prim_fdopen(Protocol, Family, Type, Fd) when is_integer(Fd) ->
+    open0(Protocol, Family, Type, ?INET_REQ_FDOPEN, ?int32(Fd)).
+
+
+open0(Protocol, Family, Type, Req, Data) ->
+    Drv = protocol2drv(Protocol),
+    AF = enc_family(Family),
+    T = enc_type(Type),
+    case load(Drv) of
+	ok ->
+	    try erlang:open_port({spawn_driver,Drv}, [binary]) of
+		S ->
+		    case ctl_cmd(S, Req, [AF,T,Data]) of
+			{ok,_} -> {ok,S};
+			{error,_}=Error ->
+			    close(S),
+			    Error
+		    end
+	    catch
+		%% The only (?) way to get here is to try to open
+		%% the sctp driver when it does not exist (badarg)
+		error:badarg       -> {error, eprotonosupport};
+		%% system_limit if out of port slots
+		error:system_limit -> {error, system_limit}
+	    end;
+	Error ->
+	    Error
+    end.
+
+enc_family(inet) -> ?INET_AF_INET;
+enc_family(inet6) -> ?INET_AF_INET6;
+enc_family(afunix) -> ?INET_AF_UNIX.
+
+enc_type(stream) -> ?INET_TYPE_STREAM;
+enc_type(dgram) -> ?INET_TYPE_DGRAM;
+enc_type(seqpacket) -> ?INET_TYPE_SEQPACKET.
+
+enc_time(Time) when Time < 0 -> [255,255,255,255];
+enc_time(Time) -> ?int32(Time).
+
+protocol2drv(tcp)  -> "tcp_inet";
+protocol2drv(udp)  -> "udp_inet";
+protocol2drv(sctp) -> "sctp_inet";
+protocol2drv(unix)  -> "afunix_drv".
+
+%% drv2protocol("tcp_inet")  -> tcp;
+%% drv2protocol("udp_inet")  -> udp;
+%% drv2protocol("sctp_inet") -> sctp;
+%% drv2protocol("afunix_drv") -> unix;
+%% drv2protocol(_)           -> undefined.
+
+%% prim_connect(S, Name) -> connect0(S, Name, -1).
+
+prim_connect(S, Name, infinity) -> connect0(S, Name, -1);
+prim_connect(S, Name, Time)     -> connect0(S, Name, Time).
+
+connect0(S, Name, Time) when is_port(S), is_list(Name), is_integer(Time) ->
+    case async_connect(S, Name, Time) of
+	{ok, S, Ref} ->
+	    receive
+		{inet_async, S, Ref, Status} ->
+		    Status
+	    end;
+	Error -> Error
+    end.
+
+async_connect(S, Name, Time) ->
+    case ctl_cmd(S, ?INET_REQ_CONNECT,
+		 [enc_time(Time),Name]) of
+	{ok, [R1,R0]} -> {ok, S, ?u16(R1,R0)};
+	{error,_}=Error -> Error
+    end.
+
+prim_bind(S,"") when is_port(S) ->
+    {ok,""};
+prim_bind(S,Name) when is_port(S), is_list(Name) ->
+    case ctl_cmd(S,?INET_REQ_BIND, [?INET_AF_UNIX, Name]) of
+	{ok,_} -> {ok,Name};
+	{error,_}=Error -> Error
+    end.
+
+%% Control command
+ctl_cmd(Port, Cmd, Args) ->
+    ?DBG_FORMAT("prim_inet:ctl_cmd(~p, ~p, ~p)~n", [Port,Cmd,Args]),
+    Result =
+	try erlang:port_control(Port, Cmd, Args) of
+	    [?INET_REP_OK|Reply]  -> {ok,Reply};
+	    [?INET_REP]  -> inet_reply;
+	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)}
+	catch
+	    error:_               -> {error,einval}
+	end,
+        ?DBG_FORMAT("prim_inet:ctl_cmd() -> ~p~n", [Result]),
+    Result.
