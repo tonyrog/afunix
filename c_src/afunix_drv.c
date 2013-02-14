@@ -17,6 +17,12 @@
  * %CopyrightEnd%
  */
 
+#ifdef __linux__
+#define __USE_GNU
+#define _GNU_SOURCE
+#define NO_SA_LEN
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -54,11 +60,12 @@
 typedef unsigned long long llu_t;
 
 #include <sys/time.h>
+
 #ifdef NETDB_H_NEEDS_IN_H
 #include <netinet/in.h>
 #endif
-#include <netdb.h>
 
+#include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -80,7 +87,12 @@ typedef unsigned long long llu_t;
 
 #include <sys/ioctl.h>
 #include <sys/un.h>
+
+#ifdef __APPLE__
+#define HAVE_SUN_LEN_FIELD
 #include <sys/ucred.h>
+#endif
+
 
 // FIXME use dlib!!!
 #define DLOG_DEBUG     7
@@ -185,13 +197,6 @@ typedef unsigned long long llu_t;
     fcntl((fd), F_SETFL, fcntl((fd), F_GETFL, 0) & ~NB_FLAG)
 #define SET_NONBLOCKING(fd) \
     fcntl((fd), F_SETFL,  fcntl((fd), F_GETFL, 0) | NB_FLAG)
-
-#ifndef ERL_DRV_BUSY_LIM_MAX
-#define ERL_DRV_BUSY_MSGQ_DISABLED      (~((ErlDrvSizeT) 0))
-#define ERL_DRV_BUSY_MSGQ_READ_ONLY     ((ErlDrvSizeT) 0)
-#define ERL_DRV_BUSY_MSGQ_LIM_MAX       (ERL_DRV_BUSY_MSGQ_DISABLED - 1)
-#define ERL_DRV_BUSY_MSGQ_LIM_MIN       ((ErlDrvSizeT) 1)
-#endif
 
 #define HAVE_SOCKLEN_T
 
@@ -2089,7 +2094,9 @@ static char* inet_set_address(int family, inet_address* dst,
 	n = *len;
 	memcpy(dst->sau.sun_path, src, n);
 	dst->sau.sun_path[n] = '\0';
+#ifdef HAVE_SUN_LEN_FIELD
 	dst->sau.sun_len = n+1;  // length including '\0'
+#endif
 	dst->sau.sun_family = family;
 	*len = SUN_LEN(&dst->sau);
 	return src + n;
@@ -2238,7 +2245,11 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
     else if ((family == AF_UNIX) && (*len >= sizeof(struct sockaddr_un))) {
 	size_t n;
 	dst[0] = INET_AF_UNIX;
+#ifdef HAVE_SUN_LEN_FIELD
 	n = src->sau.sun_len - 1;
+#else
+	n = SUN_LEN(&src->sau);
+#endif
 	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;
 	return 0;
@@ -2483,23 +2494,27 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 
 	case INET_LOPT_TCP_MSGQ_HIWTRMRK:
 	    if (desc->stype == SOCK_STREAM) {
-		ErlDrvSizeT high;
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
+	        ErlDrvSizeT high;
 		if (ival < ERL_DRV_BUSY_MSGQ_LIM_MIN
 		    || ERL_DRV_BUSY_MSGQ_LIM_MAX < ival)
 		    return -1;
 		high = (ErlDrvSizeT) ival;
-		// erl_drv_busy_msgq_limits(desc->port, NULL, &high);
+		erl_drv_busy_msgq_limits(desc->port, NULL, &high);
+#endif
 	    }
 	    continue;
 
 	case INET_LOPT_TCP_MSGQ_LOWTRMRK:
 	    if (desc->stype == SOCK_STREAM) {
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
 		ErlDrvSizeT low;
 		if (ival < ERL_DRV_BUSY_MSGQ_LIM_MIN
 		    || ERL_DRV_BUSY_MSGQ_LIM_MAX < ival)
 		    return -1;
 		low = (ErlDrvSizeT) ival;
-		// erl_drv_busy_msgq_limits(desc->port, &low, NULL);
+		erl_drv_busy_msgq_limits(desc->port, &low, NULL);
+#endif
 	    }
 	    continue;
 
@@ -2638,11 +2653,8 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	default:
 	    return -1;
 	}
-#if  defined(IP_TOS) && defined(SOL_IP) && defined(SO_PRIORITY)
-	res = setopt_prio_tos_trick (desc->s, proto, type, arg_ptr, arg_sz, propagate);
-#else
 	res = sock_setopt	    (desc->s, proto, type, arg_ptr, arg_sz);
-#endif
+
 	if (propagate && res != 0) {
 	    return -1;
 	}
@@ -2810,12 +2822,16 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 
 	case INET_LOPT_TCP_MSGQ_HIWTRMRK:
 	    if (desc->stype == SOCK_STREAM) {
-		ErlDrvSizeT high = ERL_DRV_BUSY_MSGQ_READ_ONLY;
+#ifdef ERL_DRV_BUSY_MSGQ_READ_ONLY
+	        ErlDrvSizeT high = ERL_DRV_BUSY_MSGQ_READ_ONLY;
 		*ptr++ = opt;
-		// erl_drv_busy_msgq_limits(desc->port, NULL, &high);
+		erl_drv_busy_msgq_limits(desc->port, NULL, &high);
 		high = 1;
 		ival = high > INT_MAX ? INT_MAX : (int) high;
 		put_int32(ival, ptr);
+#else
+		TRUNCATE_TO(0,ptr);
+#endif
 	    }
 	    else {
 		TRUNCATE_TO(0,ptr);
@@ -2824,12 +2840,16 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 
 	case INET_LOPT_TCP_MSGQ_LOWTRMRK:
 	    if (desc->stype == SOCK_STREAM) {
+#ifdef ERL_DRV_BUSY_MSGQ_READ_ONLY
 		ErlDrvSizeT low = ERL_DRV_BUSY_MSGQ_READ_ONLY;
 		*ptr++ = opt;
-		// erl_drv_busy_msgq_limits(desc->port, &low, NULL);
+		erl_drv_busy_msgq_limits(desc->port, &low, NULL);
 		low = 1;
 		ival = low > INT_MAX ? INT_MAX : (int) low;
 		put_int32(ival, ptr);
+#else
+		TRUNCATE_TO(0,ptr);
+#endif
 	    }
 	    else {
 		TRUNCATE_TO(0,ptr);
@@ -2972,6 +2992,7 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 
 	case UNIX_OPT_PEERCRED: {
+#ifdef LOCAL_PEERCRED
 	    struct xucred x;
 	    socklen_t xucredlen = sizeof(x);
 	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_LOCAL,LOCAL_PEERCRED,
@@ -2982,13 +3003,44 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 	    *ptr++ = opt;
 	    put_int32(x.cr_uid, ptr);
+#else
+	    struct ucred u;
+	    socklen_t ucredlen = sizeof(u);
+	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_SOCKET,SO_PEERCRED,
+					    &u,&ucredlen))) {
+	        TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(u.uid, ptr);
+#endif
 	    continue;
 	}
 
-	case UNIX_OPT_PEERPID:
-	    type = LOCAL_PEERPID;
-	    proto = SOL_LOCAL;
-	    break;
+	case UNIX_OPT_PEERPID: {
+#ifdef LOCAL_PEERPID 
+	    pid_t p;
+	    socklen_t plen = sizeof(p);
+	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_LOCAL,LOCAL_PEERPID,
+					    &p,&plen))) {
+	        TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(p, ptr);
+#else
+	    struct ucred u;
+	    socklen_t ucredlen = sizeof(u);
+	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_SOCKET,SO_PEERCRED,
+					    &u,&ucredlen))) {
+	        TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(u.pid, ptr);
+#endif
+	    continue;
+	}
 	    
 	default:
 	    RETURN_ERROR();
@@ -3681,7 +3733,9 @@ static void afunix_finish(void)
 
 static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 {
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
     ErlDrvSizeT q_low, q_high;
+#endif
     tcp_descriptor* desc;
     DEBUGF("afunix_start(%ld) {", (long)port);
 
@@ -3691,6 +3745,7 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 	return ERL_DRV_ERROR_ERRNO;
     desc->high = INET_HIGH_WATERMARK;
     desc->low  = INET_LOW_WATERMARK;
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
     q_high = INET_HIGH_MSGQ_WATERMARK;
     q_low = INET_LOW_MSGQ_WATERMARK;
     if (q_low < ERL_DRV_BUSY_MSGQ_LIM_MIN)
@@ -3701,7 +3756,8 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 	q_high = ERL_DRV_BUSY_MSGQ_LIM_MIN;
     else if (q_high > ERL_DRV_BUSY_MSGQ_LIM_MAX)
 	q_high = ERL_DRV_BUSY_MSGQ_LIM_MAX;
-    // erl_drv_busy_msgq_limits(port, &q_low, &q_high);
+    erl_drv_busy_msgq_limits(port, &q_low, &q_high);
+#endif
     desc->send_timeout = INET_INFINITY;
     desc->send_timeout_close = 0;
     desc->busy_on_send = 0;
@@ -3725,7 +3781,9 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 static tcp_descriptor* afunix_copy(tcp_descriptor* desc,SOCKET s,
 				     ErlDrvTermData owner, int* err)
 {
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
     ErlDrvSizeT q_low, q_high;
+#endif
     ErlDrvPort port = desc->inet.port;
     tcp_descriptor* copy_desc;
 
@@ -3765,10 +3823,12 @@ static tcp_descriptor* afunix_copy(tcp_descriptor* desc,SOCKET s,
     }
 
     /* Read busy msgq limits of parent */
+#ifdef ERL_DRV_BUSY_MSGQ_LIM_MIN
     q_low = q_high = ERL_DRV_BUSY_MSGQ_READ_ONLY;
-    // erl_drv_busy_msgq_limits(desc->inet.port, &q_low, &q_high);
+    erl_drv_busy_msgq_limits(desc->inet.port, &q_low, &q_high);
     /* Write same busy msgq limits to child */
-    // erl_drv_busy_msgq_limits(port, &q_low, &q_high);
+    erl_drv_busy_msgq_limits(port, &q_low, &q_high);
+#endif
 
     copy_desc->inet.port = port;
     copy_desc->inet.dport = driver_mk_port(port);
