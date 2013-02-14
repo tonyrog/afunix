@@ -24,10 +24,16 @@
 -export([shutdown/2]).
 -export([controlling_process/2]).
 -export([fdopen/2]).
+-export([get_peercred/1]).
+-export([get_peerpid/1]).
 
 -include_lib("kernel/src/inet_int.hrl").
 
 -define(INET_AF_UNIX, 5).
+
+-define(UNIX_OPT_PEERCRED,  101).
+-define(UNIX_OPT_PEERPID,   102).
+
 
 %-define(DEBUG, 1).
 -ifdef(DEBUG).
@@ -260,6 +266,21 @@ async_connect(S, Name, Time) ->
     case ctl_cmd(S, ?INET_REQ_CONNECT,
 		 [enc_time(Time),Name]) of
 	{ok, [R1,R0]} -> {ok, S, ?u16(R1,R0)};
+	{error,_}=Error -> Error
+    end.
+
+%% get peer-credentials (only effecive uid right now)
+get_peercred(S) ->
+    case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_PEERCRED]) of
+	{ok,[?UNIX_OPT_PEERCRED,U3,U2,U1,U0]} ->
+	    {ok, ?u32(U3,U2,U1,U0)};
+	{error,_}=Error -> Error
+    end.
+%% get peer-credentials (only effecive uid right now)
+get_peerpid(S) ->
+    case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_PEERPID]) of
+	{ok,[?UNIX_OPT_PEERPID,U3,U2,U1,U0]} ->
+	    {ok, ?u32(U3,U2,U1,U0)};
 	{error,_}=Error -> Error
     end.
 

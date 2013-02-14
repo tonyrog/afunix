@@ -80,6 +80,7 @@ typedef unsigned long long llu_t;
 
 #include <sys/ioctl.h>
 #include <sys/un.h>
+#include <sys/ucred.h>
 
 // FIXME use dlib!!!
 #define DLOG_DEBUG     7
@@ -381,6 +382,7 @@ typedef unsigned long long llu_t;
 #define UDP_OPT_ADD_MEMBERSHIP 14 /* add an IP group membership */
 #define UDP_OPT_DROP_MEMBERSHIP 15 /* drop an IP group membership */
 #define INET_OPT_IPV6_V6ONLY 16 /* IPv6 only socket, no mapped v4 addrs */
+
 /* LOPT is local options */
 #define INET_LOPT_BUFFER      20  /* min buffer size hint */
 #define INET_LOPT_HEADER      21  /* list header size */
@@ -400,6 +402,9 @@ typedef unsigned long long llu_t;
 #define INET_LOPT_TCP_SEND_TIMEOUT_CLOSE 35  /* auto-close on send timeout or not */
 #define INET_LOPT_TCP_MSGQ_HIWTRMRK     36  /* set local high watermark */
 #define INET_LOPT_TCP_MSGQ_LOWTRMRK     37  /* set local low watermark */
+
+#define UNIX_OPT_PEERCRED  101
+#define UNIX_OPT_PEERPID   102
 
 /* INET_REQ_GETSTAT enumeration */
 #define INET_STAT_RECV_CNT   1
@@ -2965,6 +2970,26 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 		put_int32(arg_sz,ptr);
 		continue;
 	    }
+
+	case UNIX_OPT_PEERCRED: {
+	    struct xucred x;
+	    socklen_t xucredlen = sizeof(x);
+	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_LOCAL,LOCAL_PEERCRED,
+					    &x,&xucredlen)) ||
+		(x.cr_version != XUCRED_VERSION)) {
+		TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(x.cr_uid, ptr);
+	    continue;
+	}
+
+	case UNIX_OPT_PEERPID:
+	    type = LOCAL_PEERPID;
+	    proto = SOL_LOCAL;
+	    break;
+	    
 	default:
 	    RETURN_ERROR();
 	}
