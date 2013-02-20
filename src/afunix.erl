@@ -274,6 +274,8 @@ get_peercred(S) ->
     case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_PEERCRED]) of
 	{ok,[?UNIX_OPT_PEERCRED,U3,U2,U1,U0]} ->
 	    {ok, ?u32(U3,U2,U1,U0)};
+	{ok, []} ->
+	    {error, einval};
 	{error,_}=Error -> Error
     end.
 %% get peer-credentials (only effecive uid right now)
@@ -281,6 +283,8 @@ get_peerpid(S) ->
     case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_PEERPID]) of
 	{ok,[?UNIX_OPT_PEERPID,U3,U2,U1,U0]} ->
 	    {ok, ?u32(U3,U2,U1,U0)};
+	{ok, []} ->
+	    {error, einval};
 	{error,_}=Error -> Error
     end.
 
