@@ -24,6 +24,7 @@
 #endif
 
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <unistd.h>
@@ -2098,7 +2099,8 @@ static char* inet_set_address(int family, inet_address* dst,
 	dst->sau.sun_len = n+1;  // length including '\0'
 #endif
 	dst->sau.sun_family = family;
-	*len = SUN_LEN(&dst->sau);
+	*len = offsetof(struct sockaddr_un,sun_path) + n;
+	// *len = SUN_LEN(&dst->sau);
 	return src + n;
     }
     else if ((family == AF_INET) && (*len >= 2+4)) {
@@ -2248,7 +2250,10 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 #ifdef HAVE_SUN_LEN_FIELD
 	n = src->sau.sun_len - 1;
 #else
-	n = SUN_LEN(&src->sau);
+	if (src->sau.sun_path[0] == '\0') // abstract ?
+	    n = strlen(&src->sau.sun_path[1])+1;
+	else
+	    n = strlen(src->sau.sun_path);
 #endif
 	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;
