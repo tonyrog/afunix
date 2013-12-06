@@ -273,6 +273,21 @@ typedef unsigned long long llu_t;
 */
 #define INET_ERRNO_SYSTEM_LIMIT  (15 << 8)
 
+// Hack to handle R15 driver used with pre R15 driver
+#if ERL_DRV_EXTENDED_MAJOR_VERSION == 1
+typedef int  ErlDrvSizeT;
+typedef int  ErlDrvSSizeT;
+#endif
+
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) || ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION >= 1))
+#define OUTPUT_TERM(p, message, len) erl_drv_output_term((p)->dport,(message),(len))
+#define SEND_TERM(p, to, message, len) erl_drv_send_term((p)->dport,(to),(message),(len))
+
+#else
+#define OUTPUT_TERM(p, message, len) driver_output_term((p)->port,(message),(len))
+#define SEND_TERM(p, to, message, len) driver_send_term((p)->port,(to),(message),(len))
+#endif
+
 /*----------------------------------------------------------------------------
 ** Interface constants.
 ** 
@@ -368,7 +383,7 @@ typedef unsigned long long llu_t;
 /* *_REQ_* replies */
 #define INET_REP_ERROR       0
 #define INET_REP_OK          1
-#define INET_REP             2
+// #define INET_REP             2  - only used by SCTP in inet_drv
 
 /* INET_REQ_SETOPTS and INET_REQ_GETOPTS options */
 #define INET_OPT_REUSEADDR  0   /* enable/disable local address reuse */
@@ -546,10 +561,7 @@ typedef struct subs_list_ {
 
 #define NO_PROCESS 0
 #define NO_SUBSCRIBERS(SLP) ((SLP)->subscriber == NO_PROCESS)
-static void send_to_subscribers(ErlDrvPort, subs_list *, int,
-				ErlDrvTermData [], int);
-static void free_subscribers(subs_list*);
-static int save_subscriber(subs_list *, ErlDrvTermData);
+
 
 typedef struct {
     SOCKET s;                   /* the socket or INVALID_SOCKET if not open */
@@ -607,7 +619,10 @@ typedef struct {
 				   the fd is used outside of inet_drv. */
 } inet_descriptor;
 
-
+static void send_to_subscribers(inet_descriptor* desc, subs_list *, int,
+				ErlDrvTermData [], int);
+static void free_subscribers(subs_list*);
+static int save_subscriber(subs_list *, ErlDrvTermData);
 
 #define TCP_MAX_PACKET_SIZE 0x4000000  /* 64 M */
 
@@ -1194,7 +1209,7 @@ send_async_ok(inet_descriptor* desc, int Ref,ErlDrvTermData recipient)
     i = LOAD_INT(spec, i, Ref);
     i = LOAD_ATOM(spec, i, am_ok);
     i = LOAD_TUPLE(spec, i, 4);
-    return driver_send_term(desc->port, recipient, spec, i);
+    return SEND_TERM(desc, recipient, spec, i);
 }
 
 /* send message:
@@ -1217,7 +1232,7 @@ send_async_ok_port(inet_descriptor* desc, int Ref,
 	i = LOAD_TUPLE(spec, i, 2);
     }
     i = LOAD_TUPLE(spec, i, 4);
-    return driver_send_term(desc->port, recipient, spec, i);
+    return SEND_TERM(desc, recipient, spec, i);
 }
 
 /* send message:
@@ -1241,7 +1256,7 @@ send_async_error(inet_descriptor* desc, int Ref,
     }
     i = LOAD_TUPLE(spec, i, 4);
     DEBUGF("send_async_error %ld %ld", recipient, Reason);
-    return driver_send_term(desc->port, recipient, spec, i);
+    return SEND_TERM(desc, recipient, spec, i);
 }
 
 
@@ -1312,7 +1327,7 @@ static int inet_reply_ok(inet_descriptor* desc)
     i = LOAD_ATOM(spec, i, am_ok);
     i = LOAD_TUPLE(spec, i, 3);
     desc->caller = 0;
-    return driver_send_term(desc->port, caller, spec, i);    
+    return SEND_TERM(desc, caller, spec, i);    
 }
 
 /* send:
@@ -1333,7 +1348,7 @@ static int inet_reply_error_am(inet_descriptor* desc, ErlDrvTermData reason)
     desc->caller = 0;
     
     DEBUGF("inet_reply_error_am %ld %ld", caller, reason);
-    return driver_send_term(desc->port, caller, spec, i);
+    return SEND_TERM(desc, caller, spec, i);
 }
 
 /* send:
@@ -1439,11 +1454,11 @@ static int http_response_inetdrv(void *arg, int major, int minor,
     if (desc->inet.active == INET_PASSIVE) {
         i = LOAD_TUPLE(spec, i, 2);
         i = LOAD_TUPLE(spec, i, 4);
-        return driver_send_term(desc->inet.port, caller, spec, i);
+        return SEND_TERM(&desc->inet, caller, spec, i);
     }
     else {
         i = LOAD_TUPLE(spec, i, 3);
-        return driver_output_term(desc->inet.port, spec, i);
+        return OUTPUT_TERM(&desc->inet, spec, i);
     }
 }
 
@@ -1534,11 +1549,11 @@ http_request_inetdrv(void* arg, const http_atom_t* meth, const char* meth_ptr,
     if (desc->inet.active == INET_PASSIVE) {
         i = LOAD_TUPLE(spec, i, 2);
         i = LOAD_TUPLE(spec, i, 4);
-        return driver_send_term(desc->inet.port, caller, spec, i);
+        return SEND_TERM(&desc->inet, caller, spec, i);
     }
     else {
         i = LOAD_TUPLE(spec, i, 3);
-        return driver_output_term(desc->inet.port, spec, i);
+        return OUTPUT_TERM(&desc->inet, spec, i);
     }
 }
 
@@ -1586,11 +1601,11 @@ http_header_inetdrv(void* arg, const http_atom_t* name, const char* name_ptr,
     if (desc->inet.active == INET_PASSIVE) {
         i = LOAD_TUPLE(spec, i, 2);
         i = LOAD_TUPLE(spec, i, 4);
-        return driver_send_term(desc->inet.port, caller, spec, i);
+        return SEND_TERM(&desc->inet, caller, spec, i);
     }
     else {
         i = LOAD_TUPLE(spec, i, 3);
-        return driver_output_term(desc->inet.port, spec, i);
+        return OUTPUT_TERM(&desc->inet, spec, i);
     }
 }
 
@@ -1615,7 +1630,7 @@ static int http_eoh_inetdrv(void* arg)
     i = LOAD_ATOM(spec, i,  am_http_eoh);
     i = LOAD_TUPLE(spec, i, 2);
     i = LOAD_TUPLE(spec, i, 4);
-    return driver_send_term(desc->inet.port, caller, spec, i);
+    return SEND_TERM(&desc->inet, caller, spec, i);
   }
   else {
       /* {http, S, http_eoh} */
@@ -1623,7 +1638,7 @@ static int http_eoh_inetdrv(void* arg)
       i = LOAD_PORT(spec, i,  desc->inet.dport);
       i = LOAD_ATOM(spec, i,  am_http_eoh);
       i = LOAD_TUPLE(spec, i, 3);
-      return driver_output_term(desc->inet.port, spec, i);
+      return OUTPUT_TERM(&desc->inet, spec, i);
   }
 }
 
@@ -1650,7 +1665,7 @@ static int http_error_inetdrv(void* arg, const char* buf, int len)
     i = LOAD_TUPLE(spec, i, 2);
     i = LOAD_TUPLE(spec, i, 2);
     i = LOAD_TUPLE(spec, i, 4);
-    return driver_send_term(desc->inet.port, caller, spec, i);
+    return SEND_TERM(&desc->inet, caller, spec, i);
   }
   else {
       /* {http, S, {http_error,Line} */
@@ -1660,7 +1675,7 @@ static int http_error_inetdrv(void* arg, const char* buf, int len)
       i = http_load_string(desc, spec, i, buf, len);
       i = LOAD_TUPLE(spec, i, 2);
       i = LOAD_TUPLE(spec, i, 3);
-      return driver_output_term(desc->inet.port, spec, i);
+      return OUTPUT_TERM(&desc->inet, spec, i);
   }
 }
 
@@ -1712,10 +1727,10 @@ int ssl_tls_inetdrv(void* arg, unsigned type, unsigned major, unsigned minor,
     if (desc->inet.active == INET_PASSIVE) {
         i = LOAD_TUPLE(spec, i, 2);
         i = LOAD_TUPLE(spec, i, 4);
-        ret = driver_send_term(desc->inet.port, caller, spec, i);
+        ret = SEND_TERM(&desc->inet, caller, spec, i);
     }
     else {
-        ret = driver_output_term(desc->inet.port, spec, i);
+        ret = OUTPUT_TERM(&desc->inet, spec, i);
     }
 done:
     driver_free_binary(bin);
@@ -1764,7 +1779,7 @@ static int inet_async_data(inet_descriptor* desc, const char* buf, int len)
 	i = LOAD_TUPLE(spec, i, 2);
 	i = LOAD_TUPLE(spec, i, 4);
 	desc->caller = 0;
-	return driver_send_term(desc->port, caller, spec, i);
+	return SEND_TERM(desc, caller, spec, i);
     }
     else {
 	/* INET_MODE_BINARY => [H1,H2,...HSz | Binary] */
@@ -1777,7 +1792,7 @@ static int inet_async_data(inet_descriptor* desc, const char* buf, int len)
 	i = LOAD_TUPLE(spec, i, 2);
 	i = LOAD_TUPLE(spec, i, 4);
 	desc->caller = 0;
-	code = driver_send_term(desc->port, caller, spec, i);
+	code = SEND_TERM(desc, caller, spec, i);
 	return code;
     }
 }
@@ -1845,7 +1860,7 @@ inet_async_binary_data
     /* Close up the outer {inet_async, S, Ref, {ok|error, ...}} tuple: */
     i = LOAD_TUPLE(spec, i, 4);
     desc->caller = 0;
-    return driver_send_term(desc->port, caller, spec, i);
+    return SEND_TERM(desc, caller, spec, i);
 }
 
 /* 
@@ -1867,7 +1882,7 @@ static int tcp_message(inet_descriptor* desc, const char* buf, int len)
     if ((desc->mode == INET_MODE_LIST) || (hsz > len)) {
 	i = LOAD_STRING(spec, i, buf, len); /* => [H1,H2,...Hn] */ 
 	i = LOAD_TUPLE(spec, i, 3);
-	return driver_output_term(desc->port, spec, i);
+	return OUTPUT_TERM(desc, spec, i);
     }
     else {
 	/* INET_MODE_BINARY => [H1,H2,...HSz | Binary] */
@@ -1878,7 +1893,7 @@ static int tcp_message(inet_descriptor* desc, const char* buf, int len)
 	if (hsz > 0)
 	    i = LOAD_STRING_CONS(spec, i, buf, hsz);
 	i = LOAD_TUPLE(spec, i, 3);
-	code = driver_output_term(desc->port, spec, i);
+	code = OUTPUT_TERM(desc, spec, i);
 	return code;
     }
 }
@@ -1912,7 +1927,7 @@ tcp_binary_message(inet_descriptor* desc, ErlDrvBinary* bin, int offs, int len)
 	    i = LOAD_STRING_CONS(spec, i, bin->orig_bytes+offs, hsz);
     }
     i = LOAD_TUPLE(spec, i, 3);
-    return driver_output_term(desc->port, spec, i);
+    return OUTPUT_TERM(desc, spec, i);
 }
 
 /*
@@ -1930,7 +1945,7 @@ static int tcp_closed_message(tcp_descriptor* desc)
 	i = LOAD_ATOM(spec, i, am_tcp_closed);
 	i = LOAD_PORT(spec, i, desc->inet.dport);
 	i = LOAD_TUPLE(spec, i, 2);
-	return driver_output_term(desc->inet.port, spec, i);
+	return OUTPUT_TERM(&desc->inet, spec, i);
     } 
     return 0;
 }
@@ -1950,7 +1965,7 @@ static int tcp_error_message(tcp_descriptor* desc, int err)
     i = LOAD_PORT(spec, i, desc->inet.dport);
     i = LOAD_ATOM(spec, i, am_err);
     i = LOAD_TUPLE(spec, i, 3);
-    return driver_output_term(desc->inet.port, spec, i);
+    return OUTPUT_TERM(&desc->inet, spec, i);
 }
 
 
@@ -3140,7 +3155,7 @@ send_empty_out_q_msgs(inet_descriptor* desc)
   msg_len = LOAD_PORT(msg, msg_len, desc->dport);
   msg_len = LOAD_TUPLE(msg, msg_len, 2);
 
-  send_to_subscribers(desc->port,
+  send_to_subscribers(desc,
 		      &desc->empty_out_q_subs,
 		      1,
 		      msg,
@@ -5511,7 +5526,7 @@ subs_list *subs;
 
 static void send_to_subscribers
 (
-    ErlDrvPort port,
+    inet_descriptor* desc,
     subs_list	   *subs,
     int		   free_subs,
     ErlDrvTermData msg[],
@@ -5528,7 +5543,7 @@ static void send_to_subscribers
   this = subs;
   while(this) {
     
-    (void) driver_send_term(port, this->subscriber, msg, msg_len);
+    (void) SEND_TERM(desc, this->subscriber, msg, msg_len);
 
     if(free_subs && !first) {
       next = this->next;

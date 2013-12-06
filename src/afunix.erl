@@ -302,7 +302,7 @@ ctl_cmd(Port, Cmd, Args) ->
     Result =
 	try erlang:port_control(Port, Cmd, Args) of
 	    [?INET_REP_OK|Reply]  -> {ok,Reply};
-	    [?INET_REP]  -> inet_reply;
+%%	    [?INET_REP]  -> inet_reply;
 	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)}
 	catch
 	    error:_               -> {error,einval}
