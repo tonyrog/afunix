@@ -94,6 +94,14 @@ typedef unsigned long long llu_t;
 #include <sys/ucred.h>
 #endif
 
+#if defined (__SVR4) && defined (__sun)
+#define NO_SA_LEN
+#define HAVE_GETPEERUCRED
+#include <limits.h>
+#include <string.h>
+#include <ucred.h>
+#endif
+
 
 // FIXME use dlib!!!
 #define DLOG_DEBUG     7
@@ -3023,6 +3031,15 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 	    *ptr++ = opt;
 	    put_int32(x.cr_uid, ptr);
+#elif defined (HAVE_GETPEERUCRED)
+	    ucred_t *uc = NULL;
+	    if (IS_SOCKET_ERROR(getpeerucred(desc->s,&uc))) {
+		TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(ucred_geteuid(uc), ptr);
+	    (void) ucred_free(uc);
 #else
 	    struct ucred u;
 	    socklen_t ucredlen = sizeof(u);
@@ -3048,6 +3065,15 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 	    *ptr++ = opt;
 	    put_int32(p, ptr);
+#elif defined (HAVE_GETPEERUCRED)
+	    ucred_t *uc = NULL;
+	    if (IS_SOCKET_ERROR(getpeerucred(desc->s,&uc))) {
+		TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(ucred_getpid(uc), ptr);
+	    (void) ucred_free(uc);
 #else
 	    struct ucred u;
 	    socklen_t ucredlen = sizeof(u);

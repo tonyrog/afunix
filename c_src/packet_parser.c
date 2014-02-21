@@ -27,6 +27,10 @@
 
 #include <ctype.h>
 
+#if defined (__SVR4) && defined (__sun)
+#include <string.h>
+#endif
+
 /* #define INET_DRV_DEBUG 1 */
 #ifdef INET_DRV_DEBUG
 #   define DEBUG 1
