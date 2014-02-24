@@ -43,26 +43,13 @@
 -endif.
 
 load(Driver) ->
-    Path = priv_dir(),
+    Path = code:priv_dir(afunix),
     case erl_ddll:load(Path, Driver) of
 	ok -> 
 	    ok;
 	Err={error,Error} ->
 	    io:format("Error: ~s\n", [erl_ddll:format_error_int(Error)]),
 	    Err
-    end.
-
-priv_dir() ->
-    case code:priv_dir(afunix) of
-	{error, bad_name} ->
-	    case code:which(?MODULE) of
-		Filename when is_list(Filename) ->
-		    filename:join([filename:dirname(Filename), "../priv"]);
-		_ ->
-		    "../priv"
-	    end;
-	Dir ->
-	    Dir
     end.
 
 %%
