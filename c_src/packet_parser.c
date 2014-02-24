@@ -26,6 +26,7 @@
 #include "packet_parser.h"
 
 #include <ctype.h>
+#include <memory.h>
 
 #if defined (__SVR4) && defined (__sun)
 #include <string.h>
