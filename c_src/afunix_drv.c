@@ -3861,7 +3861,7 @@ static tcp_descriptor* afunix_copy(tcp_descriptor* desc,SOCKET s,
     copy_desc->send_timeout_close = desc->send_timeout_close;
     
     /* The new port will be linked and connected to the original caller */
-    port = driver_create_port(port, owner, "tcp_inet", (ErlDrvData) copy_desc);
+    port =  (ErlDrvPort) driver_create_port((long)port, owner, "tcp_inet", (ErlDrvData) ((long)copy_desc));
     if ((long)port == -1) {
 	*err = INET_ERRNO_SYSTEM_LIMIT;
 	FREE(copy_desc);

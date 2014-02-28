@@ -27,13 +27,56 @@
 -export([get_peercred/1]).
 -export([get_peerpid/1]).
 
--include_lib("kernel/src/inet_int.hrl").
+%% rasperry pi distribute non-source 
+%% -include_lib("kernel/src/inet_int.hrl").
+-define(INET_REQ_OPEN,          1).
+-define(INET_REQ_CONNECT,       3).
+-define(INET_REQ_BIND,          6).
+-define(INET_REQ_GETOPTS,       8).
+-define(INET_REQ_FDOPEN,        13).
 
+-define(INET_REP_ERROR,    0).
+-define(INET_REP_OK,       1).
+-define(INET_REP,          2).
+
+-define(int32(X),
+        [((X) bsr 24) band 16#ff, ((X) bsr 16) band 16#ff,
+         ((X) bsr 8) band 16#ff, (X) band 16#ff]).
+-define(u16(X1,X0),
+        (((X1) bsl 8) bor (X0))).
+-define(u32(X3,X2,X1,X0),
+        (((X3) bsl 24) bor ((X2) bsl 16) bor ((X1) bsl 8) bor (X0))).
+
+-define(INET_AF_INET,         1).
+-define(INET_AF_INET6,        2).
 -define(INET_AF_UNIX, 5).
+
+-define(INET_TYPE_STREAM,     1).
+-define(INET_TYPE_DGRAM,      2).
+-define(INET_TYPE_SEQPACKET,  3).
 
 -define(UNIX_OPT_PEERCRED,  101).
 -define(UNIX_OPT_PEERPID,   102).
 
+-define(LISTEN_BACKLOG, 5).     %% default backlog 
+
+-record(connect_opts,
+	{
+	  ifaddr = any,     %% bind to interface address
+          port   = 0,       %% bind to port (default is dynamic port)
+          fd      = -1,     %% fd >= 0 => already bound
+          opts   = []       %% [{active,true}] added in inet:connect_options 
+         }).
+
+-record(listen_opts,
+        {
+          ifaddr = any,              %% bind to interface address
+          port   = 0,                %% bind to port (default is dynamic port)
+          backlog = ?LISTEN_BACKLOG, %% backlog
+          fd      = -1,              %% %% fd >= 0 => already bound 
+          opts   = []                %% [{active,true}] added in
+                                     %% inet:listen_options 
+         }).
 
 %-define(DEBUG, 1).
 -ifdef(DEBUG).
