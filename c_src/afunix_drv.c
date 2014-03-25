@@ -3820,6 +3820,13 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
     return (ErlDrvData) desc;
 }
 
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) || ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION >= 1))
+#define CREATE_CAST
+#else
+#define CREATE_CAST (long)
+#endif
+
+
 /* Copy a descriptor, by creating a new port with same settings
  * as the descriptor desc.
  * return NULL on error (SYSTEM_LIMIT no ports avail)
@@ -3861,7 +3868,7 @@ static tcp_descriptor* afunix_copy(tcp_descriptor* desc,SOCKET s,
     copy_desc->send_timeout_close = desc->send_timeout_close;
     
     /* The new port will be linked and connected to the original caller */
-    port = driver_create_port(port, owner, "tcp_inet", (ErlDrvData) copy_desc);
+    port =  (ErlDrvPort) driver_create_port(CREATE_CAST port, owner, "tcp_inet", (ErlDrvData) ((long)copy_desc));
     if ((long)port == -1) {
 	*err = INET_ERRNO_SYSTEM_LIMIT;
 	FREE(copy_desc);
