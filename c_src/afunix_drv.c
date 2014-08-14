@@ -102,6 +102,13 @@ typedef unsigned long long llu_t;
 #include <ucred.h>
 #endif
 
+// testing #undef LOCAL_PEERCRED
+// testing #undef LOCAL_PEERPID
+// missing LOCAL_PEERCRED in sys/un.h probably a 10.7.x and earlier
+#if defined (__APPLE__) && !defined(LOCAL_PEERCRED)
+#define HAVE_GETPEEREID 
+#endif
+
 
 // FIXME use dlib!!!
 #define DLOG_DEBUG     7
@@ -3040,7 +3047,7 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    *ptr++ = opt;
 	    put_int32(ucred_geteuid(uc), ptr);
 	    (void) ucred_free(uc);
-#else
+#elif defined (SO_PEERCRED)
 	    struct ucred u;
 	    socklen_t ucredlen = sizeof(u);
 	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_SOCKET,SO_PEERCRED,
@@ -3050,6 +3057,19 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 	    *ptr++ = opt;
 	    put_int32(u.uid, ptr);
+#elif defined (HAVE_GETPEEREID)
+#warning "using getpeereid"
+	    uid_t euid;
+	    gid_t egid;
+	    if (IS_SOCKET_ERROR(getpeereid(desc->s, &euid, &egid))) {
+	        TRUNCATE_TO(0,ptr);
+		continue;
+	    }
+	    *ptr++ = opt;
+	    put_int32(euid, ptr);
+#else
+#warning "no method of accessing socket peercred"
+	    TRUNCATE_TO(0,ptr);
 #endif
 	    continue;
 	}
@@ -3074,7 +3094,7 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    *ptr++ = opt;
 	    put_int32(ucred_getpid(uc), ptr);
 	    (void) ucred_free(uc);
-#else
+#elif defined (SO_PEERCRED)
 	    struct ucred u;
 	    socklen_t ucredlen = sizeof(u);
 	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_SOCKET,SO_PEERCRED,
@@ -3084,6 +3104,9 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	    }
 	    *ptr++ = opt;
 	    put_int32(u.pid, ptr);
+#else
+#warning "no method of accessing socket peerpid found"
+	    TRUNCATE_TO(0,ptr);
 #endif
 	    continue;
 	}
