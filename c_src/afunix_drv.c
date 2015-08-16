@@ -3845,6 +3845,8 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 
 #if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) || ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION >= 1))
 #define CREATE_CAST(ptr) (ptr)
+#elif ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION == 0))
+#define CREATE_CAST(ptr) (((long)(ptr)))
 #else
 #define CREATE_CAST(ptr) ((ErlDrvPort)((long)(ptr)))
 #endif
