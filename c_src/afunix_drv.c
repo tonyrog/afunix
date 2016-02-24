@@ -2281,7 +2281,7 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	size_t n;
 	dst[0] = INET_AF_UNIX;
 #ifdef HAVE_SUN_LEN_FIELD
-	n = src->sau.sun_len - 1;
+	n = strlen(src->sau.sun_path);
 #else
 	if (src->sau.sun_path[0] == '\0') // abstract ?
 	    n = *len-1;  // strlen(&src->sau.sun_path[1])
