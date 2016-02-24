@@ -439,8 +439,8 @@ typedef int  ErlDrvSSizeT;
 #define INET_LOPT_TCP_MSGQ_HIWTRMRK     36  /* set local high watermark */
 #define INET_LOPT_TCP_MSGQ_LOWTRMRK     37  /* set local low watermark */
 
-#define UNIX_OPT_PEERCRED  101
-#define UNIX_OPT_PEERPID   102
+#define UNIX_OPT_PEERCRED  201
+#define UNIX_OPT_PEERPID   202
 
 /* INET_REQ_GETSTAT enumeration */
 #define INET_STAT_RECV_CNT   1
@@ -2274,16 +2274,18 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	*len = 3 + sizeof(struct in_addr);
 	return 0;
     }
-    else if ((family == AF_UNIX) && (*len >= sizeof(struct sockaddr_un))) {
+    else if ((family == AF_UNIX) && (*len <= sizeof(struct sockaddr_un))) {
 	size_t n;
 	dst[0] = INET_AF_UNIX;
 #ifdef HAVE_SUN_LEN_FIELD
 	n = src->sau.sun_len - 1;
 #else
 	if (src->sau.sun_path[0] == '\0') // abstract ?
-	    n = strlen(&src->sau.sun_path[1])+1;
+	    n = *len-1;  // strlen(&src->sau.sun_path[1])
+	else if (*len == 2)
+	    n = 0;
 	else
-	    n = strlen(src->sau.sun_path);
+	    n = *len-3; // strlen(src->sau.sun_path);
 #endif
 	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;

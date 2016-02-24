@@ -27,13 +27,23 @@
 -export([get_peercred/1]).
 -export([get_peerpid/1]).
 
+-export([getstat/2]).
+-export([setopt/3, setopts/2, getopt/2, getopts/2]).
+-export([peername/1, setpeername/2]).
+-export([sockname/1, setsockname/2]).
+-export([attach/1, detach/1]).
+
 %% rasperry pi distribute non-source 
 %% -include_lib("kernel/src/inet_int.hrl").
 -define(INET_REQ_OPEN,          1).
 -define(INET_REQ_CONNECT,       3).
+-define(INET_REQ_PEER,          4).
+-define(INET_REQ_NAME,          5).
 -define(INET_REQ_BIND,          6).
 -define(INET_REQ_GETOPTS,       8).
 -define(INET_REQ_FDOPEN,        13).
+-define(INET_REQ_SETNAME,       19).
+-define(INET_REQ_SETPEER,       20).
 
 -define(INET_REP_ERROR,    0).
 -define(INET_REP_OK,       1).
@@ -55,8 +65,8 @@
 -define(INET_TYPE_DGRAM,      2).
 -define(INET_TYPE_SEQPACKET,  3).
 
--define(UNIX_OPT_PEERCRED,  101).
--define(UNIX_OPT_PEERPID,   102).
+-define(UNIX_OPT_PEERCRED,  201).
+-define(UNIX_OPT_PEERPID,   202).
 
 -define(LISTEN_BACKLOG, 5).     %% default backlog 
 
@@ -94,6 +104,52 @@ load(Driver) ->
 	    io:format("Error: ~s\n", [erl_ddll:format_error_int(Error)]),
 	    Err
     end.
+
+%% prim wrapper
+getstat(S, Stats) -> prim_inet:getstat(S, Stats).
+
+setopt(S, Opt, Value) -> prim_inet:setopt(S, Opt, Value).
+setopts(S, Opts) -> prim_inet:setopts(S, Opts).
+
+getopt(S, Opt) -> prim_inet:getopt(S, Opt).
+getopts(S, Opts) -> prim_inet:getopts(S, Opts).
+
+peername(S) ->
+    case ctl_cmd(S, ?INET_REQ_PEER, []) of
+	{ok, [_F|Name]} -> {ok, Name};
+	{error,_}=Error -> Error
+    end.
+
+setpeername(S, Name) when is_port(S) ->
+    case ctl_cmd(S, ?INET_REQ_SETPEER, [Name]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setpeername(S, undefined) when is_port(S) ->
+    case ctl_cmd(S, ?INET_REQ_SETPEER, []) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end.
+
+sockname(S) ->
+    case ctl_cmd(S, ?INET_REQ_NAME, []) of
+	{ok, [_F|Name]} -> {ok, Name};
+	{error,_}=Error -> Error
+    end.
+
+setsockname(S, Name) when is_port(S) ->
+    case ctl_cmd(S, ?INET_REQ_SETNAME, [Name]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setsockname(S, undefined) when is_port(S) ->
+    case ctl_cmd(S, ?INET_REQ_SETNAME, []) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end.    
+
+attach(S) -> prim_inet:attach(S).
+detach(S) -> prim_inet:detach(S).
 
 %%
 %% Send data on a socket
