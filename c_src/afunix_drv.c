@@ -89,9 +89,13 @@ typedef unsigned long long llu_t;
 #include <sys/ioctl.h>
 #include <sys/un.h>
 
-#ifdef __APPLE__
+#if defined (__APPLE__) || defined (__FreeBSD__)
 #define HAVE_SUN_LEN_FIELD
 #include <sys/ucred.h>
+#endif
+
+#if !defined(SOL_LOCAL)
+#define SOL_LOCAL 0
 #endif
 
 #if defined (__SVR4) && defined (__sun)
@@ -106,9 +110,8 @@ typedef unsigned long long llu_t;
 // testing #undef LOCAL_PEERPID
 // missing LOCAL_PEERCRED in sys/un.h probably a 10.7.x and earlier
 #if defined (__APPLE__) && !defined(LOCAL_PEERCRED)
-#define HAVE_GETPEEREID 
+#define HAVE_GETPEEREID
 #endif
-
 
 // FIXME use dlib!!!
 #define DLOG_DEBUG     7
@@ -3077,7 +3080,7 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 	}
 
 	case UNIX_OPT_PEERPID: {
-#ifdef LOCAL_PEERPID 
+#ifdef LOCAL_PEERPID
 	    pid_t p;
 	    socklen_t plen = sizeof(p);
 	    if (IS_SOCKET_ERROR(sock_getopt(desc->s,SOL_LOCAL,LOCAL_PEERPID,
@@ -3112,7 +3115,7 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 #endif
 	    continue;
 	}
-	    
+
 	default:
 	    RETURN_ERROR();
 	}
@@ -3847,6 +3850,8 @@ static ErlDrvData afunix_start(ErlDrvPort port, char* args)
 
 #if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) || ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION >= 1))
 #define CREATE_CAST(ptr) (ptr)
+#elif ((ERL_DRV_EXTENDED_MAJOR_VERSION == 2) && (ERL_DRV_EXTENDED_MINOR_VERSION == 0))
+#define CREATE_CAST(ptr) (((long)(ptr)))
 #else
 #define CREATE_CAST(ptr) ((ErlDrvPort)((long)(ptr)))
 #endif
