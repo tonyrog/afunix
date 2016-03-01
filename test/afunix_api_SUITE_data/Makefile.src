@@ -1,0 +1,9 @@
+
+NIF_LIBS = afunix_api_SUITE@dll@
+SHLIB_EXTRA_LDLIBS = @LIBS@
+
+all: $(NIF_LIBS)
+
+@SHLIB_RULES@
+
+$(NIF_LIBS): afunix_api_SUITE.c
