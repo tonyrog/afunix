@@ -104,6 +104,7 @@ int packet_get_length(enum PacketParseType htype,
 		      const char* ptr, unsigned n,  /* Bytes read so far */
 		      unsigned max_plen,      /* Packet max length, 0=no limit */
 		      unsigned trunc_len,     /* Truncate (lines) if longer, 0=no limit */
+		      char     delimiter,     /* Line delimiting character */
 		      int* statep);           /* Internal protocol state */
 
 ERTS_GLB_INLINE

@@ -341,6 +341,7 @@ typedef int  ErlDrvSSizeT;
 #define INET_PASSIVE        0  /* false */
 #define INET_ACTIVE         1  /* true */
 #define INET_ONCE           2  /* true; active once then passive */
+#define INET_MULTI          3  /* true; active N then passive */
 
 /* INET_REQ_GETSTATUS enumeration */
 #define INET_F_OPEN         0x0001
@@ -445,6 +446,9 @@ typedef int  ErlDrvSSizeT;
 #define INET_LOPT_TCP_SEND_TIMEOUT_CLOSE 35  /* auto-close on send timeout or not */
 #define INET_LOPT_TCP_MSGQ_HIWTRMRK     36  /* set local high watermark */
 #define INET_LOPT_TCP_MSGQ_LOWTRMRK     37  /* set local low watermark */
+#define INET_LOPT_NETNS             38  /* Network namespace pathname */
+#define INET_LOPT_TCP_SHOW_ECONNRESET 39  /* tell user about incoming RST */
+#define INET_LOPT_LINE_DELIM        40  /* Line delimiting char */
 
 #define UNIX_OPT_PEERCRED  201
 #define UNIX_OPT_PEERPID   202
@@ -608,6 +612,7 @@ typedef struct {
     inet_async_op  op_queue[INET_MAX_ASYNC];  /* call queue */
 
     int   active;               /* 0 = passive, 1 = active, 2 = active once */
+    int16_t active_count;        /* counter for {active,N} */
     int   stype;                /* socket type:
 				    SOCK_STREAM/SOCK_DGRAM/SOCK_SEQPACKET   */
     int   sprotocol;            /* socket protocol:
@@ -631,6 +636,7 @@ typedef struct {
     double recv_avg;            /* average packet size received */
     double recv_dvi;            /* avarage deviation from avg_size */
     uint64_t      send_oct;     /* number of octets sent, 64 bits */
+    char          delimiter;    /* Line delimiting character (def: '\n')  */
     unsigned long send_cnt;     /* number of packets sent */
     unsigned long send_max;     /* maximum packet send */
     double send_avg;            /* average packet size sent */
@@ -704,6 +710,17 @@ static int afunix_input(tcp_descriptor* desc, HANDLE event);
 static int async_ref = 0;          /* async reference id generator */
 #define NEW_ASYNC_ID() ((async_ref++) & 0xffff)
 
+/* check for transition from active to passive */
+#define INET_CHECK_ACTIVE_TO_PASSIVE(inet)                              \
+    do {                                                                \
+        if ((inet)->active == INET_ONCE)                                \
+            (inet)->active = INET_PASSIVE;                              \
+        else if ((inet)->active == INET_MULTI && --((inet)->active_count) == 0) { \
+            (inet)->active = INET_PASSIVE;                              \
+            packet_passive_message(inet);                               \
+        }                                                               \
+    } while (0)
+
 
 static ErlDrvTermData am_ok;
 static ErlDrvTermData am_tcp;
@@ -713,6 +730,7 @@ static ErlDrvTermData am_inet_async;
 static ErlDrvTermData am_inet_reply;
 static ErlDrvTermData am_timeout;
 static ErlDrvTermData am_closed;
+static ErlDrvTermData am_tcp_passive;
 static ErlDrvTermData am_tcp_closed;
 static ErlDrvTermData am_tcp_error;
 static ErlDrvTermData am_udp_error;
@@ -1984,6 +2002,22 @@ static int tcp_error_message(tcp_descriptor* desc, int err)
     return OUTPUT_TERM(&desc->inet, spec, i);
 }
 
+/*
+** active mode message: send active-to-passive transition message
+**        {tcp_passive, S} or
+*/
+ static int packet_passive_message(inet_descriptor* desc)
+ {
+     ErlDrvTermData spec[6];
+     int i = 0;
+
+     DEBUGF("packet_passive_message(%ld):\r\n", (long)desc->port);
+
+     i = LOAD_ATOM(spec, i, am_tcp_passive);
+     i = LOAD_PORT(spec, i, desc->dport);
+     i = LOAD_TUPLE(spec, i, 2);
+     return erl_drv_output_term(desc->dport, spec, i);
+ }
 
 /* 
 ** active=TRUE:
@@ -2017,8 +2051,7 @@ static int tcp_reply_data(tcp_descriptor* desc, char* buf, int len)
 
     if (code < 0)
 	return code;
-    if (desc->inet.active == INET_ONCE)
-	desc->inet.active = INET_PASSIVE;
+    INET_CHECK_ACTIVE_TO_PASSIVE(INETP(desc));
     return code;
 }
 
@@ -2079,6 +2112,7 @@ static int inet_init()
     INIT_ATOM(inet_reply);
     INIT_ATOM(timeout);
     INIT_ATOM(closed);
+    INIT_ATOM(tcp_passive);
     INIT_ATOM(tcp_closed);
     INIT_ATOM(tcp_error);
     INIT_ATOM(udp_error);
@@ -2483,6 +2517,23 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 	    DEBUGF("inet_set_opts(%ld): s=%d, ACTIVE=%d",
 		    (long)desc->port, desc->s,ival);
 	    desc->active = ival;
+            if (desc->active == INET_MULTI) {
+                long ac = desc->active_count;
+                int16_t nval = get_int16(ptr);
+                ptr += 2;
+                len -= 2;
+                ac += nval;
+                if (ac > INT16_MAX || ac < INT16_MIN)
+                    return -1;
+                desc->active_count += nval;
+                if (desc->active_count < 0)
+                    desc->active_count = 0;
+                if (desc->active_count == 0) {
+                    desc->active = INET_PASSIVE;
+                    packet_passive_message(desc);
+                }
+            } else
+                desc->active_count = 0;
 	    if ((desc->stype == SOCK_STREAM) && (desc->active != INET_PASSIVE) && 
 		(desc->state == INET_STATE_CLOSED)) {
 		tcp_closed_message((tcp_descriptor *) desc);
@@ -2582,6 +2633,12 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 		else
 		    tdesc->tcp_add_flags &= ~TCP_ADDF_DELAY_SEND;
 	    }
+	    continue;
+
+	case INET_LOPT_LINE_DELIM:
+	    DEBUGF("inet_set_opts(%ld): s=%d, LINE_DELIM=%d\r\n",
+		   (long)desc->port, desc->s, ival);
+	    desc->delimiter = (char)ival;
 	    continue;
 
 	case INET_OPT_REUSEADDR: 
@@ -3286,6 +3343,8 @@ static ErlDrvData inet_start(ErlDrvPort port, int size, int protocol)
 					  socket */
     desc->deliver = INET_DELIVER_TERM; /* standard term format */
     desc->active  = INET_PASSIVE;      /* start passive */
+    desc->active_count = 0;
+    desc->delimiter    = '\n';         /* line delimiting char */
     desc->oph = NULL;
     desc->opt = NULL;
 
@@ -4583,7 +4642,7 @@ static int tcp_remain(tcp_descriptor* desc, int* len)
 
     tlen = packet_get_length(desc->inet.htype, ptr, n, 
                              desc->inet.psize, desc->i_bufsz,
-                             &desc->http_state);
+                             desc->inet.delimiter, &desc->http_state);
     if (tlen > 0) {
         if (tlen <= n) { /* got a packet */
             *len = tlen;
