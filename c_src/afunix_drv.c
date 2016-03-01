@@ -2281,16 +2281,12 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	size_t n;
 	dst[0] = INET_AF_UNIX;
 #ifdef HAVE_SUN_LEN_FIELD
-	n = src->sau.sun_len-2;  // apple only?
+	n = *len - offsetof(struct sockaddr_un, sun_path); // -1
+	// apple/bsd do not support abstract sockets
 	if ((n > 0) && (src->sau.sun_path[0] == '\0'))
 	    n = 0;
 #else
-	if (src->sau.sun_path[0] == '\0') // abstract ?
-	    n = *len-1;  // strlen(&src->sau.sun_path[1])
-	else if (*len == 2)
-	    n = 0;
-	else
-	    n = *len-3; // strlen(src->sau.sun_path);
+	n = *len - offsetof(struct sockaddr_un, sun_path) - 1;
 #endif
 	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;
