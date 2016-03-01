@@ -4283,7 +4283,7 @@ static ErlDrvSSizeT afunix_ctl(ErlDrvData e, unsigned int cmd,
     }
     case TCP_REQ_SHUTDOWN: {
 	int how;
-	DEBUGF("afunix_ctl(%ld): FDOPEN", (long)desc->inet.port); 
+	DEBUGF("afunix_ctl(%ld): SHUTDOWN", (long)desc->inet.port); 
 	if (!IS_CONNECTED(INETP(desc))) {
 	    return ctl_error(ENOTCONN, rbuf, rsize);
 	}
@@ -4377,8 +4377,6 @@ static void afunix_multi_timeout(ErlDrvData e, ErlDrvTermData caller)
     }
     send_async_error(&desc->inet, id, caller, am_timeout);
 }
-    
-
 	
 /*
 ** command:
