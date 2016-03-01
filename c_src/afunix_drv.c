@@ -2281,7 +2281,9 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	size_t n;
 	dst[0] = INET_AF_UNIX;
 #ifdef HAVE_SUN_LEN_FIELD
-	n = strlen(src->sau.sun_path);
+	n = src->sau.sun_len-2;  // apple only?
+	if ((n > 0) && (src->sau.sun_path[0] == '\0'))
+	    n = 0;
 #else
 	if (src->sau.sun_path[0] == '\0') // abstract ?
 	    n = *len-1;  // strlen(&src->sau.sun_path[1])
