@@ -124,10 +124,14 @@ typedef unsigned long long llu_t;
 #define DLOG_EMERGENCY 0
 #define DLOG_NONE     -1
 
+#ifndef DLOG_DEFAULT
+#define DLOG_DEFAULT DLOG_NONE
+#endif
+
 #define DLOG(level,file,line,args...) do {			\
 	if (((level) == DLOG_EMERGENCY) ||			\
 	    ((debug_level >= 0) && ((level) <= debug_level))) { \
-	    emit_error((level),(file),(line),args);		\
+	    emit_log((level),(file),(line),args);		\
 	}							\
     } while(0)
 
@@ -863,15 +867,9 @@ static void *realloc_wrapper(void *current, ErlDrvSizeT size){
 #define INET_DRV_CACHE_LINE_SIZE ((ErlDrvUInt) 64)
 #define INET_DRV_CACHE_LINE_MASK (INET_DRV_CACHE_LINE_SIZE - 1)
 
+static int debug_level = DLOG_DEFAULT;
 
-static int debug_level = DLOG_NONE;
-
-static void set_debug(int level)
-{
-    debug_level = level;
-}
-
-static void emit_error(int level, char* file, int line, ...)
+static void emit_log(int level, char* file, int line, ...)
 {
     va_list ap;
     char* fmt;
@@ -2278,7 +2276,7 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	return 0;
     }
     else if ((family == AF_UNIX) && (*len <= sizeof(struct sockaddr_un))) {
-	size_t n;
+	int n;
 	dst[0] = INET_AF_UNIX;
 #ifdef HAVE_SUN_LEN_FIELD
 	n = *len - offsetof(struct sockaddr_un, sun_path); // -1
@@ -2287,6 +2285,11 @@ static int inet_get_address(int family, char* dst, inet_address* src, unsigned i
 	    n = 0;
 #else
 	n = *len - offsetof(struct sockaddr_un, sun_path) - 1;
+	if ((n > 0) && (src->sau.sun_path[0] == '\0')) // abstract
+	    n++; // hmmm
+	DEBUGF("inet_get_address *len = %u, n=%d", *len, n);
+	if (n < 0)
+	    n = 0;
 #endif
 	memcpy(dst+1, (char*)&src->sau.sun_path, n);
 	*len = 1 + n;
@@ -5627,9 +5630,6 @@ static void send_to_subscribers
 DRIVER_INIT(afunix_drv)
 {
     ErlDrvEntry* ptr = &afunix_driver_entry;
-
-    // set_debug(DLOG_DEBUG);
-    set_debug(DLOG_NONE);
 
     DEBUGF("afunix_drv DRIVER_INIT");
 
