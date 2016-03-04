@@ -56,10 +56,11 @@
         (((X1) bsl 8) bor (X0))).
 -define(u32(X3,X2,X1,X0),
         (((X3) bsl 24) bor ((X2) bsl 16) bor ((X1) bsl 8) bor (X0))).
+-define(int16(X), [((X) bsr 8) band 16#ff, (X) band 16#ff]).
 
 -define(INET_AF_INET,         1).
 -define(INET_AF_INET6,        2).
--define(INET_AF_UNIX, 5).
+-define(INET_AF_UNIX,         5).
 
 -define(INET_TYPE_STREAM,     1).
 -define(INET_TYPE_DGRAM,      2).
@@ -116,12 +117,27 @@ getopts(S, Opts) -> prim_inet:getopts(S, Opts).
 
 peername(S) ->
     case ctl_cmd(S, ?INET_REQ_PEER, []) of
-	{ok, [_F|Name]} -> {ok, Name};
+	{ok, [?INET_AF_UNIX|Name]} -> {ok, Name};
+	{ok, [F, P1,P0 | Addr]} ->
+	    {IP, _} = get_ip(F, Addr),
+	    {ok, { IP, ?u16(P1, P0) }};
 	{error,_}=Error -> Error
     end.
 
-setpeername(S, Name) when is_port(S) ->
-    case ctl_cmd(S, ?INET_REQ_SETPEER, [Name]) of
+setpeername(S, Name) when is_port(S), is_list(Name) ->
+    case ctl_cmd(S, ?INET_REQ_SETPEER, [?INET_AF_UNIX|Name]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setpeername(S, {IP,Port}) when is_port(S), tuple_size(IP) =:= 4 ->
+    case ctl_cmd(S, ?INET_REQ_SETPEER, [?INET_AF_INET,?int16(Port),
+					ip4_to_bytes(IP)]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setpeername(S, {IP,Port}) when is_port(S), tuple_size(IP) =:= 8 ->
+    case ctl_cmd(S, ?INET_REQ_SETPEER, [?INET_AF_INET6,?int16(Port),
+					ip6_to_bytes(IP)]) of
 	{ok,[]} -> ok;
 	{error,_}=Error -> Error
     end;
@@ -133,12 +149,27 @@ setpeername(S, undefined) when is_port(S) ->
 
 sockname(S) ->
     case ctl_cmd(S, ?INET_REQ_NAME, []) of
-	{ok, [_F|Name]} -> {ok, Name};
+	{ok, [?INET_AF_UNIX|Name]} -> {ok, Name};
+	{ok, [F, P1, P0 | Addr]} ->
+	    {IP, _} = get_ip(F, Addr),
+	    {ok, { IP, ?u16(P1, P0) }};	
 	{error,_}=Error -> Error
     end.
 
-setsockname(S, Name) when is_port(S) ->
-    case ctl_cmd(S, ?INET_REQ_SETNAME, [Name]) of
+setsockname(S, Name) when is_port(S), is_list(Name) ->
+    case ctl_cmd(S, ?INET_REQ_SETNAME, [?INET_AF_UNIX|Name]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setsockname(S, {IP,Port}) when is_port(S), tuple_size(IP) =:= 4 ->
+    case ctl_cmd(S, ?INET_REQ_SETNAME, [?INET_AF_INET,?int16(Port),
+					ip4_to_bytes(IP)]) of
+	{ok,[]} -> ok;
+	{error,_}=Error -> Error
+    end;
+setsockname(S, {IP,Port}) when is_port(S), tuple_size(IP) =:= 8 ->
+    case ctl_cmd(S, ?INET_REQ_SETNAME, [?INET_AF_INET6,?int16(Port),
+					ip6_to_bytes(IP)]) of
 	{ok,[]} -> ok;
 	{error,_}=Error -> Error
     end;
@@ -394,6 +425,25 @@ prim_bind(S,Name) when is_port(S), is_list(Name) ->
 	{ok,_} -> {ok,Name};
 	{error,_}=Error -> Error
     end.
+
+ip_to_bytes(IP) when tuple_size(IP) =:= 4 -> ip4_to_bytes(IP);
+ip_to_bytes(IP) when tuple_size(IP) =:= 8 -> ip6_to_bytes(IP).
+
+ip4_to_bytes({A,B,C,D}) ->
+    [A band 16#ff, B band 16#ff, C band 16#ff, D band 16#ff].
+
+ip6_to_bytes({A,B,C,D,E,F,G,H}) ->
+    [?int16(A), ?int16(B), ?int16(C), ?int16(D),
+     ?int16(E), ?int16(F), ?int16(G), ?int16(H)].
+
+get_ip(?INET_AF_INET, Addr)  -> get_ip4(Addr);
+get_ip(?INET_AF_INET6, Addr) -> get_ip6(Addr).
+
+get_ip4([A,B,C,D | T]) -> {{A,B,C,D},T}.
+
+get_ip6([X1,X2,X3,X4,X5,X6,X7,X8,X9,X10,X11,X12,X13,X14,X15,X16 | T]) ->
+    { { ?u16(X1,X2),?u16(X3,X4),?u16(X5,X6),?u16(X7,X8),
+	?u16(X9,X10),?u16(X11,X12),?u16(X13,X14),?u16(X15,X16)}, T}.
 
 %% Control command
 ctl_cmd(Port, Cmd, Args) ->

@@ -3536,7 +3536,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	    if (IS_SOCKET_ERROR(sock_peer(desc->s, (struct sockaddr*)ptr,&sz)))
 		return ctl_error(sock_errno(), rbuf, rsize);
 	}
-	if (inet_get_address(desc->sfamily, tbuf, ptr, &sz) < 0)
+	if (inet_get_address(ptr->sa.sa_family, tbuf, ptr, &sz) < 0)
 	    return ctl_error(EINVAL, rbuf, rsize);
 	return ctl_reply(INET_REP_OK, tbuf, sz, rbuf, rsize);
     }
@@ -3548,8 +3548,8 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	}
 	else if (len < 2)
 	    return ctl_error(EINVAL, rbuf, rsize);	    
-	else if (inet_set_address(desc->sfamily, &desc->peer_addr,
-				  buf, &len) == NULL)
+	else if (inet_set_faddress(desc->sfamily, &desc->peer_addr,
+				   buf, &len) == NULL)
 	    return ctl_error(EINVAL, rbuf, rsize);
 	else {
 	    desc->peer_ptr = &desc->peer_addr;
@@ -3573,7 +3573,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	    if (IS_SOCKET_ERROR(sock_name(desc->s, (struct sockaddr*)ptr, &sz)))
 		return ctl_error(sock_errno(), rbuf, rsize);
 	}
-	if (inet_get_address(desc->sfamily, tbuf, ptr, &sz) < 0)
+	if (inet_get_address(ptr->sa.sa_family, tbuf, ptr, &sz) < 0)
 	    return ctl_error(EINVAL, rbuf, rsize);
 	return ctl_reply(INET_REP_OK, tbuf, sz, rbuf, rsize);
     }
@@ -3585,7 +3585,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
 	}
 	else if (len < 2)
 	    return ctl_error(EINVAL, rbuf, rsize);	    
-	else if (inet_set_address(desc->sfamily, &desc->name_addr,
+	else if (inet_set_faddress(desc->sfamily, &desc->name_addr,
 				  buf, &len) == NULL)
 	    return ctl_error(EINVAL, rbuf, rsize);
 	else {
