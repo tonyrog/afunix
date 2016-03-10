@@ -2034,12 +2034,12 @@ static int tcp_reply_data(tcp_descriptor* desc, char* buf, int len)
     const char* body = buf;
     int bodylen = len;
     
-    packet_get_body(desc->inet.htype, &body, &bodylen);
+    afunix_packet_get_body(desc->inet.htype, &body, &bodylen);
 
     if (desc->inet.deliver == INET_DELIVER_PORT) {
         code = inet_port_data(INETP(desc), body, bodylen);
     }
-    else if ((code=packet_parse(desc->inet.htype, buf, len,
+    else if ((code=afunix_packet_parse(desc->inet.htype, buf, len,
                                 &desc->http_state, &packet_callbacks,
                                 desc)) == 0) {
         /* No body parsing, return raw binary */
@@ -2063,12 +2063,12 @@ tcp_reply_binary_data(tcp_descriptor* desc, ErlDrvBinary* bin, int offs, int len
     const char* body = buf;
     int bodylen = len;
 
-    packet_get_body(desc->inet.htype, &body, &bodylen);
+    afunix_packet_get_body(desc->inet.htype, &body, &bodylen);
     offs = body - bin->orig_bytes; /* body offset now */
 
     if (desc->inet.deliver == INET_DELIVER_PORT)
         code = inet_port_binary_data(INETP(desc), bin, offs, bodylen);
-    else if ((code=packet_parse(desc->inet.htype, buf, len, &desc->http_state,
+    else if ((code=afunix_packet_parse(desc->inet.htype, buf, len, &desc->http_state,
                                      &packet_callbacks,desc)) == 0) {
         /* No body parsing, return raw data */
         if (desc->inet.active == INET_PASSIVE)
@@ -2092,6 +2092,7 @@ tcp_reply_binary_data(tcp_descriptor* desc, ErlDrvBinary* bin, int offs, int len
 static int
 sock_init(void) /* May be called multiple times. */
 {
+    afunix_packet_parser_init();
     return 1;
 }
 
@@ -4640,7 +4641,13 @@ static int tcp_remain(tcp_descriptor* desc, int* len)
     DEBUGF("tcp_remain(%ld): s=%d, n=%d, nfill=%d nsz=%d", 
 	    (long)desc->inet.port, desc->inet.s, n, nfill, nsz);
 
-    tlen = packet_get_length(desc->inet.htype, ptr, n, 
+    DEBUGF("htype=%d, ptr=%p, n=%d, psize=%u, tlen=%u, delimiter=%d *state=%d",
+	   desc->inet.htype, ptr, n, 
+	   desc->inet.psize, desc->i_bufsz,
+	   desc->inet.delimiter, desc->http_state);
+
+
+    tlen = afunix_packet_get_length(desc->inet.htype, ptr, n, 
                              desc->inet.psize, desc->i_bufsz,
                              desc->inet.delimiter, &desc->http_state);
     if (tlen > 0) {

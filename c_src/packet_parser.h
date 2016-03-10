@@ -94,21 +94,21 @@ typedef struct {
 
 /* Called once at emulator start
  */
-void packet_parser_init(void);
+void afunix_packet_parser_init(void);
 
 /* Returns > 0 Total packet length.
  *         = 0 Length unknown, need more data.
  *         < 0 Error, invalid format.
  */
-int packet_get_length(enum PacketParseType htype,
-		      const char* ptr, unsigned n,  /* Bytes read so far */
+int afunix_packet_get_length(enum PacketParseType htype,
+		      char* ptr, unsigned n,  /* Bytes read so far */
 		      unsigned max_plen,      /* Packet max length, 0=no limit */
 		      unsigned trunc_len,     /* Truncate (lines) if longer, 0=no limit */
 		      char     delimiter,     /* Line delimiting character */
 		      int* statep);           /* Internal protocol state */
 
 ERTS_GLB_INLINE
-void packet_get_body(enum PacketParseType htype,
+void afunix_packet_get_body(enum PacketParseType htype,
                      const char** bufp, /* In: Packet header, Out: Packet body */
                      int* lenp);        /* In: Packet length, Out: Body length */
 
@@ -117,7 +117,7 @@ void packet_get_body(enum PacketParseType htype,
 **        -1 = Error
 */
 ERTS_GLB_INLINE
-int packet_parse(enum PacketParseType htype, 
+int afunix_packet_parse(enum PacketParseType htype, 
 		 const char* buf, int len, /* Total packet */
 		 int* statep, PacketCallbacks* pcb, void* arg);
 
@@ -138,12 +138,12 @@ struct fcgi_head {
     /* char data[] */
     /* char padding[paddingLength] */
 };
-int packet_parse_http(const char*, int, int*, PacketCallbacks*, void*);
-int packet_parse_ssl(const char*, int, PacketCallbacks*, void*);
+int afunix_packet_parse_http(const char*, int, int*, PacketCallbacks*, void*);
+int afunix_packet_parse_ssl(const char*, int, PacketCallbacks*, void*);
 
 
 ERTS_GLB_INLINE
-void packet_get_body(enum PacketParseType htype, const char** bufp, int* lenp)
+void afunix_packet_get_body(enum PacketParseType htype, const char** bufp, int* lenp)
 {
     switch (htype) {
     case TCP_PB_1:  *bufp += 1; *lenp -= 1; break;
@@ -158,7 +158,7 @@ void packet_get_body(enum PacketParseType htype, const char** bufp, int* lenp)
 }
 
 ERTS_GLB_INLINE
-int packet_parse(enum PacketParseType htype, const char* buf, int len,
+int afunix_packet_parse(enum PacketParseType htype, const char* buf, int len,
 		 int* statep, PacketCallbacks* pcb, void* arg)
 {	
     switch (htype) {
@@ -166,11 +166,11 @@ int packet_parse(enum PacketParseType htype, const char* buf, int len,
     case TCP_PB_HTTPH:
     case TCP_PB_HTTP_BIN:
     case TCP_PB_HTTPH_BIN:
-        if (packet_parse_http(buf, len, statep, pcb, arg) < 0)
+        if (afunix_packet_parse_http(buf, len, statep, pcb, arg) < 0)
             pcb->http_error(arg, buf, len);
         return 1;
     case TCP_PB_SSL_TLS:
-	return packet_parse_ssl(buf, len, pcb, arg);
+	return afunix_packet_parse_ssl(buf, len, pcb, arg);
     default:;
     }
     return 0;

@@ -32,8 +32,9 @@
 #include <string.h>
 #endif
 
-/* #define INET_DRV_DEBUG 1 */
+// #define INET_DRV_DEBUG 1
 #ifdef INET_DRV_DEBUG
+#include <stdio.h>
 #   define DEBUG 1
 #   undef DEBUGF
 #   define DEBUGF(X) printf X
@@ -288,10 +289,11 @@ struct tpkt_head {
     unsigned char packet_length[2]; /* size incl header, big-endian (?) */
 };
 
-void packet_parser_init()
+void afunix_packet_parser_init()
 {
     static int done = 0;
     if (!done) {
+      DEBUGF(("packet_parser_init\r\n"));
         done = 1;
         http_init();
     }
@@ -301,8 +303,8 @@ void packet_parser_init()
  *        = 0 Length unknown, need more data.
  *        < 0 Error, invalid format.
  */
-int packet_get_length(enum PacketParseType htype,
-                      const char* ptr, unsigned n, /* Bytes read so far */
+int afunix_packet_get_length(enum PacketParseType htype,
+                      char* ptr, unsigned n, /* Bytes read so far */
                       unsigned max_plen,     /* Max packet length, 0=no limit */
                       unsigned trunc_len,    /* Truncate (lines) if longer, 0=no limit */
                       char     delimiter,    /* Line delimiting character */
@@ -310,11 +312,12 @@ int packet_get_length(enum PacketParseType htype,
 {
     unsigned hlen, plen;
 
+    DEBUGF(("packet_get_length htype=%d, n=%u, max_plen=%u, trunc_len=%u, delimiter=%d, *statep=%d\r\n", htype, n, max_plen, trunc_len, delimiter, *statep));
     switch (htype) {
     case TCP_PB_RAW:
         if (n == 0) goto more;
         else {
-            DEBUGF((" => nothing remain packet=%d\r\n", n));        
+            DEBUGF((" => nothing remain packet=%d\r\n", n));
             return n;
         }
 
@@ -476,7 +479,7 @@ int packet_get_length(enum PacketParseType htype,
                 }
                 else {
                     plen = (ptr2 - ptr) + 1;
-
+		    DEBUGF((" => plen=%d\r\n", plen));
                     if (*statep == 0) {
                         if (max_plen != 0 && plen > max_plen)
                             goto error;
@@ -692,7 +695,8 @@ static void http_parse_uri(PacketHttpURI* uri, const char* uri_ptr, int uri_len)
 **  {http_response, Version, Status, Message}
 **  {http_error,    Error-Line}
 */
-int packet_parse_http(const char* buf, int len, int* statep,
+
+int afunix_packet_parse_http(const char* buf, int len, int* statep,
                       PacketCallbacks* pcb, void* arg)
 {
     const char* ptr = buf;
@@ -895,7 +899,7 @@ int packet_parse_http(const char* buf, int len, int* statep,
     return -1;
 }   
 
-int packet_parse_ssl(const char* buf, int len,
+int afunix_packet_parse_ssl(const char* buf, int len,
                      PacketCallbacks* pcb, void* arg)
 {
     /* Check for ssl-v2 client hello */
