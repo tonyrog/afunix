@@ -2016,7 +2016,7 @@ static int tcp_error_message(tcp_descriptor* desc, int err)
      i = LOAD_ATOM(spec, i, am_tcp_passive);
      i = LOAD_PORT(spec, i, desc->dport);
      i = LOAD_TUPLE(spec, i, 2);
-     return erl_drv_output_term(desc->dport, spec, i);
+     return OUTPUT_TERM(desc, spec, i);
  }
 
 /* 
