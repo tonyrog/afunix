@@ -768,8 +768,14 @@ static const struct in6_addr in6addr_loopback =
 #  endif /* ! HAVE_DECL_IN6ADDR_LOOPBACK */
 #endif /* HAVE_IN6 */
 
-/* XXX: is this a driver interface function ??? */
-void erl_exit(int n, char*, ...);
+static void fatal_exit(int n, char* fmt, ...)
+{
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+  exit(n);
+}
 
 /*
  * Malloc wrapper,
@@ -782,7 +788,7 @@ void erl_exit(int n, char*, ...);
 static void *alloc_wrapper(ErlDrvSizeT size){
     void *ret = driver_alloc(size);
     if(ret == NULL) 
-	erl_exit(1,"Out of virtual memory in malloc (%s)", __FILE__);
+        fatal_exit(1,"Out of virtual memory in malloc (%s)", __FILE__);
     return ret;
 }
 #define ALLOC(X) alloc_wrapper(X)
@@ -790,7 +796,7 @@ static void *alloc_wrapper(ErlDrvSizeT size){
 static void *realloc_wrapper(void *current, ErlDrvSizeT size){
     void *ret = driver_realloc(current,size);
     if(ret == NULL) 
-	erl_exit(1,"Out of virtual memory in realloc (%s)", __FILE__);
+	fatal_exit(1,"Out of virtual memory in realloc (%s)", __FILE__);
     return ret;
 }
 #define REALLOC(X,Y) realloc_wrapper(X,Y)
@@ -2846,8 +2852,8 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
     do {						\
 	ErlDrvSizeT new_need = ((Ptr) - (*dest)) + (Size);	\
 	if (new_need > dest_used) {			\
-	    erl_exit(1,"Internal error in inet_drv, "	\
-		     "miscalculated buffer size");	\
+	    fatal_exit(1,"Internal error in inet_drv, "	\
+		       "miscalculated buffer size");	\
 	}						\
 	dest_used = new_need;				\
     } while(0)
