@@ -60,7 +60,11 @@
 
 -define(INET_AF_INET,         1).
 -define(INET_AF_INET6,        2).
--define(INET_AF_UNIX,         5).
+-define(INET_AF_ANY,          3). % Fake for ANY in any address family
+-define(INET_AF_LOOPBACK,     4). % Fake for LOOPBACK in any address family
+-define(INET_AF_LOCAL,        5). % For Unix Domain address family
+-define(INET_AF_UNIX,         5). % Original name for INET_AF_LOCAL
+-define(INET_AF_UNDEFINED,    6). % For any unknown address family
 
 -define(INET_TYPE_STREAM,     1).
 -define(INET_TYPE_DGRAM,      2).
@@ -96,6 +100,8 @@
 -define(DBG_FORMAT(Format, Args), ok).
 -endif.
 
+-define(is_digit(X), (((X) >= $0) andalso ((X) =< $9))).
+
 load(Driver) ->
     Path = code:priv_dir(afunix),
     case erl_ddll:load(Path, Driver) of
@@ -104,6 +110,24 @@ load(Driver) ->
 	Err={error,Error} ->
 	    io:format("Error: ~s\n", [erl_ddll:format_error_int(Error)]),
 	    Err
+    end.
+
+release() ->
+    case erlang:system_info(otp_release) of
+	[$R,A,B|_] when ?is_digit(A), ?is_digit(B) ->  (A-$0)*10 + (B-$0);
+	[$R,A|_] when ?is_digit(A) -> (A-$0);
+	Release ->
+	    try list_to_integer(Release) of
+		R -> R
+	    catch
+		error:_ -> Release
+	    end
+    end.
+
+option_arg() ->
+    R = release(),
+    if R >= 19 -> inet_tcp;
+       true -> inet
     end.
 
 %% prim wrapper
@@ -227,7 +251,7 @@ connect(Name, Opts, Timeout) when is_integer(Timeout),
     do_connect(Name, Opts, Timeout).
 
 do_connect(Name, Opts, Time) when is_list(Name) ->
-    case inet:connect_options(Opts, inet) of
+    case inet:connect_options(Opts, option_arg()) of
 	{error, Reason} -> exit(Reason);
 	{ok, #connect_opts{fd=Fd,
 			   opts=SockOpts}} ->
@@ -245,7 +269,7 @@ do_connect(Name, Opts, Time) when is_list(Name) ->
 %% Listen
 %%
 listen(Name, Opts) when is_list(Name) ->  %% or binary?
-    case inet:listen_options(Opts, inet) of
+    case inet:listen_options(Opts, option_arg()) of
 	{error,Reason} -> exit(Reason);
 	{ok, #listen_opts{fd=Fd,
 			  opts=SockOpts}=R} ->
