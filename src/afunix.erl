@@ -26,6 +26,8 @@
 -export([fdopen/2]).
 -export([get_peercred/1]).
 -export([get_peerpid/1]).
+-export([get_uid/1]).
+-export([get_euid/1]).
 
 -export([getstat/2]).
 -export([setopt/3, setopts/2, getopt/2, getopts/2]).
@@ -72,6 +74,8 @@
 
 -define(UNIX_OPT_PEERCRED,  201).
 -define(UNIX_OPT_PEERPID,   202).
+-define(UNIX_OPT_UID,       203).
+-define(UNIX_OPT_EUID,      204).
 
 -define(LISTEN_BACKLOG, 5).     %% default backlog 
 
@@ -93,7 +97,7 @@
                                      %% inet:listen_options 
          }).
 
-%-define(DEBUG, 1).
+-define(DEBUG, 1).
 -ifdef(DEBUG).
 -define(DBG_FORMAT(Format, Args), (io:format((Format), (Args)))).
 -else.
@@ -432,10 +436,31 @@ get_peercred(S) ->
 	    {error, einval};
 	{error,_}=Error -> Error
     end.
+
 %% get peer-credentials (only effecive uid right now)
 get_peerpid(S) ->
     case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_PEERPID]) of
 	{ok,[?UNIX_OPT_PEERPID,U3,U2,U1,U0]} ->
+	    {ok, ?u32(U3,U2,U1,U0)};
+	{ok, []} ->
+	    {error, einval};
+	{error,_}=Error -> Error
+    end.
+
+%% get peer-credentials (only effecive uid right now)
+get_uid(S) ->
+    case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_UID]) of
+	{ok,[?UNIX_OPT_UID,U3,U2,U1,U0]} ->
+	    {ok, ?u32(U3,U2,U1,U0)};
+	{ok, []} ->
+	    {error, einval};
+	{error,_}=Error -> Error
+    end.
+
+%% get peer-credentials (only effecive uid right now)
+get_euid(S) ->
+    case ctl_cmd(S, ?INET_REQ_GETOPTS, [?UNIX_OPT_EUID]) of
+	{ok,[?UNIX_OPT_EUID,U3,U2,U1,U0]} ->
 	    {ok, ?u32(U3,U2,U1,U0)};
 	{ok, []} ->
 	    {error, einval};
@@ -471,14 +496,17 @@ get_ip6([X1,X2,X3,X4,X5,X6,X7,X8,X9,X10,X11,X12,X13,X14,X15,X16 | T]) ->
 
 %% Control command
 ctl_cmd(Port, Cmd, Args) ->
-    ?DBG_FORMAT("prim_inet:ctl_cmd(~p, ~p, ~p)~n", [Port,Cmd,Args]),
+    ?DBG_FORMAT("afunix:ctl_cmd(~p, ~p, ~p)~n", [Port,Cmd,Args]),
     Result =
 	try erlang:port_control(Port, Cmd, Args) of
 	    [?INET_REP_OK|Reply]  -> {ok,Reply};
 %%	    [?INET_REP]  -> inet_reply;
-	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)}
+	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)};
+	    Reply ->
+		?DBG_FORMAT("afunix:ctl_cmd() -> ~p~n", [Reply]),
+		{error,einval}
 	catch
 	    error:_               -> {error,einval}
 	end,
-        ?DBG_FORMAT("prim_inet:ctl_cmd() -> ~p~n", [Result]),
+        ?DBG_FORMAT("afunix:ctl_cmd() -> ~p~n", [Result]),
     Result.

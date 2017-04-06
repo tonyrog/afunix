@@ -452,6 +452,8 @@ typedef int  ErlDrvSSizeT;
 
 #define UNIX_OPT_PEERCRED  201
 #define UNIX_OPT_PEERPID   202
+#define UNIX_OPT_UID       203
+#define UNIX_OPT_EUID      204
 
 /* INET_REQ_GETSTAT enumeration */
 #define INET_STAT_RECV_CNT   1
@@ -2863,14 +2865,13 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
     *ptr = INET_REP_OK;
 
     while(len--) {
-	opt = *buf++;
+	opt = *((unsigned char*)buf++);
 	proto = SOL_SOCKET;
 	ival = 0; /* Windows Vista needs this (only writes part of it) */
 	arg_sz = sizeof(ival);
 	arg_ptr = (char*) &ival;
 
 	PLACE_FOR(5,ptr);
-
 	switch(opt) {
 	case INET_LOPT_BUFFER:
 	    *ptr++ = opt;
@@ -3178,6 +3179,20 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 #warning "no method of accessing socket peerpid found"
 	    TRUNCATE_TO(0,ptr);
 #endif
+	    continue;
+	}
+
+	case UNIX_OPT_UID: {
+	    uid_t uid = getuid();
+	    *ptr++ = opt;
+	    put_int32(uid, ptr);
+	    continue;
+	}
+
+	case UNIX_OPT_EUID: {
+	    uid_t euid = geteuid();
+	    *ptr++ = opt;
+	    put_int32(euid, ptr);
 	    continue;
 	}
 
