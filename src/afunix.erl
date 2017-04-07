@@ -97,7 +97,7 @@
                                      %% inet:listen_options 
          }).
 
--define(DEBUG, 1).
+%% -define(DEBUG, 1).
 -ifdef(DEBUG).
 -define(DBG_FORMAT(Format, Args), (io:format((Format), (Args)))).
 -else.
@@ -502,8 +502,8 @@ ctl_cmd(Port, Cmd, Args) ->
 	    [?INET_REP_OK|Reply]  -> {ok,Reply};
 %%	    [?INET_REP]  -> inet_reply;
 	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)};
-	    Reply ->
-		?DBG_FORMAT("afunix:ctl_cmd() -> ~p~n", [Reply]),
+	    _Reply ->
+		?DBG_FORMAT("afunix:ctl_cmd() -> ~p~n", [_Reply]),
 		{error,einval}
 	catch
 	    error:_               -> {error,einval}
