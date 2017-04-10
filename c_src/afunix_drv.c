@@ -547,7 +547,11 @@ typedef union {
 #endif
 
 typedef struct _multi_timer_data {
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) && (ERL_DRV_EXTENDED_MINOR_VERSION > 2)
+    ErlDrvTime when;
+#else
     ErlDrvNowData when;
+#endif
     ErlDrvTermData caller;
     void (*timeout_function)(ErlDrvData drv_data, ErlDrvTermData caller);
     struct _multi_timer_data *next;
@@ -3647,7 +3651,7 @@ static ErlDrvSSizeT inet_ctl(inet_descriptor* desc, int cmd, char* buf,
       if (!IS_CONNECTED(desc))
 	  return ctl_error(ENOTCONN, rbuf, rsize);
 
-      if (!desc->stype == SOCK_STREAM)
+      if (desc->stype != SOCK_STREAM)
 	  return ctl_error(EINVAL, rbuf, rsize);
 
       if (*buf == 1 && !desc->is_ignored) {
@@ -5423,7 +5427,7 @@ static int afunix_output(tcp_descriptor* desc, HANDLE event)
 
 -----------------------------------------------------------------------------*/
 
-
+#if !((ERL_DRV_EXTENDED_MAJOR_VERSION > 2) && (ERL_DRV_EXTENDED_MINOR_VERSION > 2))
 static void absolute_timeout(unsigned millis, ErlDrvNowData *out)
 {
     unsigned rest;
@@ -5501,7 +5505,7 @@ static unsigned relative_timeout(ErlDrvNowData *in)
 		       (in_secs * 1000UL) + 
 		       in_millis);
 }
-
+#endif
 
 static void fire_multi_timers(MultiTimerData **first, ErlDrvPort port,
 			      ErlDrvData data)
@@ -5512,11 +5516,16 @@ static void fire_multi_timers(MultiTimerData **first, ErlDrvPort port,
     }
 #ifdef DEBUG
     {
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) && (ERL_DRV_EXTENDED_MINOR_VERSION > 2)
+	ErlDrvTime chk = erl_drv_monotonic_time(ERL_DRV_MSEC);
+	ASSERT(chk >= (*first)->when);
+#else	
 	ErlDrvNowData chk;
 	driver_get_now(&chk);
 	chk.microsecs /= 10000UL;
 	chk.microsecs *= 10000UL;
 	chk.microsecs += 10000;
+#endif
     }
 #endif
     do {
@@ -5528,7 +5537,11 @@ static void fire_multi_timers(MultiTimerData **first, ErlDrvPort port,
 	    return;
 	}
 	(*first)->prev = NULL;
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2)&&(ERL_DRV_EXTENDED_MINOR_VERSION > 2)
+	next_timeout = (*first)->when - erl_drv_monotonic_time(ERL_DRV_MSEC);
+#else
 	next_timeout = relative_timeout(&((*first)->when));
+#endif
     } while (next_timeout == 0);
     driver_set_timer(port,next_timeout);
 }
@@ -5553,7 +5566,13 @@ static void remove_multi_timer(MultiTimerData **first, ErlDrvPort port, MultiTim
 	driver_cancel_timer(port);
 	*first = p->next;
 	if (*first) {
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) && (ERL_DRV_EXTENDED_MINOR_VERSION > 2)
+	    ErlDrvTime ntmo = (*first)->when - erl_drv_monotonic_time(ERL_DRV_MSEC);
+	    if (ntmo < 0)
+		ntmo = 0;
+#else
 	    unsigned ntmo = relative_timeout(&((*first)->when));
+#endif
 	    driver_set_timer(port,ntmo);
 	}
     }
@@ -5562,6 +5581,53 @@ static void remove_multi_timer(MultiTimerData **first, ErlDrvPort port, MultiTim
     }
     FREE(p);
 }
+
+#if (ERL_DRV_EXTENDED_MAJOR_VERSION > 2) && (ERL_DRV_EXTENDED_MINOR_VERSION > 2)
+
+static MultiTimerData *add_multi_timer(MultiTimerData **first, ErlDrvPort port, 
+				       ErlDrvTermData caller, unsigned timeout,
+				       void (*timeout_fun)(ErlDrvData drv_data, 
+							   ErlDrvTermData caller))
+{
+    MultiTimerData *mtd, *p, *s;
+    mtd = ALLOC(sizeof(MultiTimerData));
+    mtd->when = erl_drv_monotonic_time(ERL_DRV_MSEC) + ((ErlDrvTime) timeout) + 1;
+    mtd->timeout_function = timeout_fun;
+    mtd->caller = caller;
+    mtd->next = mtd->prev = NULL;
+    for(p = *first,s = NULL; p != NULL; s = p, p = p->next) {
+	if (p->when >= mtd->when) {
+	    break;
+	}
+    }
+
+    if (!p) {
+	if (!s) {
+	    *first = mtd;
+	} else {
+	    s->next = mtd;
+	    mtd->prev = s;
+	}
+    } else {
+	if (!s) {
+	    *first = mtd;
+	} else {
+	    s->next = mtd;
+	    mtd->prev = s;
+	}
+	mtd->next = p;
+	p->prev = mtd;
+    }
+    if (!s) {
+	if (mtd->next) {
+	    driver_cancel_timer(port);
+	}
+	driver_set_timer(port,timeout);
+    }
+    return mtd;
+}
+
+#else
 
 static MultiTimerData *add_multi_timer(MultiTimerData **first, ErlDrvPort port, 
 				       ErlDrvTermData caller, unsigned timeout,
@@ -5622,9 +5688,7 @@ static MultiTimerData *add_multi_timer(MultiTimerData **first, ErlDrvPort port,
     return mtd;
 }
 	
-
-
-
+#endif
 
 /*-----------------------------------------------------------------------------
 
@@ -5632,9 +5696,7 @@ static MultiTimerData *add_multi_timer(MultiTimerData **first, ErlDrvPort port,
 
 -----------------------------------------------------------------------------*/
 
-static int
-save_subscriber(subs, subs_pid)
-subs_list *subs; ErlDrvTermData subs_pid;
+static int save_subscriber(subs_list *subs, ErlDrvTermData subs_pid)
 {
   subs_list *tmp;
 
@@ -5655,9 +5717,7 @@ subs_list *subs; ErlDrvTermData subs_pid;
   return 1;
 }
 
-static void
-free_subscribers(subs)
-subs_list *subs;
+static void free_subscribers(subs_list *subs)
 {
   subs_list *this;
   subs_list *next;
@@ -5673,14 +5733,11 @@ subs_list *subs;
   subs->next = NULL;
 }
 
-static void send_to_subscribers
-(
-    inet_descriptor* desc,
-    subs_list	   *subs,
-    int		   free_subs,
-    ErlDrvTermData msg[],
-    int msg_len
-)
+static void send_to_subscribers(inet_descriptor* desc,
+				subs_list	   *subs,
+				int		   free_subs,
+				ErlDrvTermData msg[],
+				int msg_len)
 {
   subs_list *this;
   subs_list *next;
