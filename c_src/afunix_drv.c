@@ -449,6 +449,7 @@ typedef int  ErlDrvSSizeT;
 #define INET_LOPT_NETNS             38  /* Network namespace pathname */
 #define INET_LOPT_TCP_SHOW_ECONNRESET 39  /* tell user about incoming RST */
 #define INET_LOPT_LINE_DELIM        40  /* Line delimiting char */
+#define INET_OPT_TCLASS             41  /* IPv6 transport class */
 
 #define UNIX_OPT_PEERCRED  201
 #define UNIX_OPT_PEERPID   202
@@ -2717,6 +2718,15 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 #else
 	    continue;
 #endif
+#if defined(IPV6_TCLASS) && defined(SOL_IPV6)
+	case INET_OPT_TCLASS:
+	    proto = SOL_IPV6;
+	    type = IPV6_TCLASS;
+	    propagate = 1;
+	    DEBUGF("inet_set_opts(%ld): s=%d, IPV6_TCLASS=%d\r\n",
+		   (long)desc->port, desc->s, ival);
+	    break;
+#endif
 
 	case TCP_OPT_NODELAY:
 	    proto = IPPROTO_TCP; 
@@ -3013,6 +3023,15 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
 #else
 	    *ptr++ = opt;
 	    put_int32(0, ptr);
+	    continue;
+#endif
+	case INET_OPT_TCLASS:
+#if defined(IPV6_TCLASS) && defined(SOL_IPV6)
+	    proto = SOL_IPV6;
+	    type = IPV6_TCLASS;
+	    break;
+#else
+	    TRUNCATE_TO(0,ptr);
 	    continue;
 #endif
 	case INET_OPT_REUSEADDR: 
