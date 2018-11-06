@@ -1,8 +1,12 @@
+%% -*- erlang -*-
 {application, afunix,
  [{description, "AF_UNIX socket driver"},
-  {vsn, git},
-  {modules, [afunix]},
+  {vsn, "1.0"},
   {registered, []},
   {env, []},
-  {applications,[kernel,stdlib]}
-  ]}.
+  {applications,[kernel,stdlib]},
+  {included_applications, []},
+  {maintainers, ["Tony Rogvall"]},
+  {licenses, ["MPL-2.0"]},
+  {links, [{"Github", "https://github.com/tonyrog/afunix"}]}
+ ]}.

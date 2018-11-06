@@ -19,7 +19,7 @@
 %%
 -module(afunix_echo_SUITE).
 
--include_lib("test_server/include/test_server.hrl").
+-include_lib("common_test/include/ct.hrl").
 
 %%-compile(export_all).
 
@@ -445,11 +445,11 @@ uniform(N) ->
     case get(random_seed) of
 	undefined ->
 	    {X, Y, Z} = time(),
-	    random:seed(X, Y, Z);
+	    rand:seed(exs1024, {X, Y, Z});
 	_ ->
 	    ok
     end,
-    random:uniform(N).
+    rand:uniform(N).
 
 put_int32(X, big, List) ->
     [ (X bsr 24) band 16#ff, 
