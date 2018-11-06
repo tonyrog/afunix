@@ -46,9 +46,9 @@ all() ->
      t_shutdown_async, t_fdopen, t_fdconnect].
 
 groups() ->
-    [{t_accept, [], [t_accept_timeout]},
-     {t_connect, [], [t_connect_bad]},
-     {t_recv, [], [t_recv_timeout, t_recv_eof]}].
+    [{t_accept, [shuffle], [t_accept_timeout]},
+     {t_connect, [shuffle], [t_connect_bad]},
+     {t_recv, [shuffle], [t_recv_timeout, t_recv_eof]}].
 
 init_per_suite(Config) ->
     Config.
@@ -205,7 +205,7 @@ t_fdconnect(Config) when is_list(Config) ->
                        ["in ", [], <<"a small town">>, [" in Germany,", <<>>]]],
     Question1 = iolist_to_binary(Question2),
     Answer = "there was a shoemaker, Schumacher was his name.",
-    Path = ?config(data_dir, Config),
+    Path = "../../../../test/priv",
     Lib = "afunix_api_SUITE",
     ok = erlang:load_nif(filename:join(Path,Lib), []),
     SocketName = socket_name(Config,"socket_t_fdopen"),

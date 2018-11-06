@@ -1,2 +1,5 @@
 .rebar/
 c_src/*.d
+/_build
+*.o
+*.so
