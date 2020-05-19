@@ -55,6 +55,8 @@
    increasing Erlang's portability.
 */
 
+#define ERTS_INET_DRV_CONTROL_MAGIC_NUMBER 0x03f1a300
+
 #define IS_SOCKET_ERROR(val) ((val) < 0)
 
 #define LLU "%llu"
@@ -256,11 +258,24 @@ typedef unsigned long long llu_t;
                       (((unsigned char*) (s))[2] << 8)  | \
                       (((unsigned char*) (s))[3]))
 
+/*
 #define put_int32(i, s) do {((char*)(s))[0] = (char)((i) >> 24) & 0xff;   \
                             ((char*)(s))[1] = (char)((i) >> 16) & 0xff;   \
                             ((char*)(s))[2] = (char)((i) >> 8)  & 0xff;   \
                             ((char*)(s))[3] = (char)(i)         & 0xff;} \
                         while (0)
+*/
+
+static inline void put_int32(int i, char* ptr)
+{
+    ptr[3] = i;
+    i >>= 8;
+    ptr[2] = i;
+    i >>= 8;
+    ptr[1] = i;
+    i >>= 8;
+    ptr[0] = i;
+}
 
 #define get_int24(s) ((((unsigned char*) (s))[0] << 16) | \
                       (((unsigned char*) (s))[1] << 8)  | \
@@ -2491,6 +2506,9 @@ static int inet_set_opts(inet_descriptor* desc, char* ptr, int len)
 			  errors can be propagated for BC reasons) */
     int res;
 
+    li_val.l_onoff = 0;
+    li_val.l_linger = 0;
+
     while(len >= 5) {
 	opt = *ptr++;
 	ival = get_int32(ptr);
@@ -2833,6 +2851,9 @@ static ErlDrvSSizeT inet_fill_opts(inet_descriptor* desc,
     ErlDrvSizeT dest_allocated = destlen;
     char *orig_dest = *dest;
 
+    li_val.l_onoff = 0;
+    li_val.l_linger = 0;
+    
     /* Ptr is a name parameter */ 
 #define RETURN_ERROR()				\
     do {					\
@@ -4090,6 +4111,9 @@ static ErlDrvSSizeT afunix_ctl(ErlDrvData e, unsigned int cmd,
 				 char** rbuf, ErlDrvSizeT rsize)
 {
     tcp_descriptor* desc = (tcp_descriptor*)e;
+
+    if (cmd >= ERTS_INET_DRV_CONTROL_MAGIC_NUMBER)
+	cmd -= ERTS_INET_DRV_CONTROL_MAGIC_NUMBER;
 
     switch(cmd) {
     case INET_REQ_OPEN: { /* open socket and return internal index */

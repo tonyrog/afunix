@@ -79,6 +79,12 @@
 
 -define(LISTEN_BACKLOG, 5).     %% default backlog 
 
+-if(?OTP_RELEASE >= 23).
+-define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 16#03f1a300).
+-else.
+-define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 0).
+-endif.
+
 -record(connect_opts,
 	{
 	  ifaddr = any,     %% bind to interface address
@@ -498,7 +504,8 @@ get_ip6([X1,X2,X3,X4,X5,X6,X7,X8,X9,X10,X11,X12,X13,X14,X15,X16 | T]) ->
 ctl_cmd(Port, Cmd, Args) ->
     ?DBG_FORMAT("afunix:ctl_cmd(~p, ~p, ~p)~n", [Port,Cmd,Args]),
     Result =
-	try erlang:port_control(Port, Cmd, Args) of
+	try erlang:port_control(Port, Cmd+?ERTS_INET_DRV_CONTROL_MAGIC_NUMBER,
+				Args) of
 	    [?INET_REP_OK|Reply]  -> {ok,Reply};
 %%	    [?INET_REP]  -> inet_reply;
 	    [?INET_REP_ERROR|Err] -> {error,list_to_atom(Err)};
