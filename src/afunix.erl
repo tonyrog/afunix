@@ -79,10 +79,12 @@
 
 -define(LISTEN_BACKLOG, 5).     %% default backlog 
 
--if(?OTP_RELEASE >= 23).
--define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 16#03f1a300).
+-ifdef(OTP_RELEASE).
+    -if(?OTP_RELEASE >= 23).
+        -define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 16#03f1a300).
+    -endif.
 -else.
--define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 0).
+    -define(ERTS_INET_DRV_CONTROL_MAGIC_NUMBER, 0).
 -endif.
 
 -record(connect_opts,
