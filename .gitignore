@@ -1,2 +1,3 @@
 .rebar/
 c_src/*.d
+src/*.d
