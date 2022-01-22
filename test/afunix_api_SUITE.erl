@@ -63,11 +63,12 @@ end_per_group(_,_Config) ->
     ok.
 
 init_per_testcase(_Func, Config) ->
-    Dog = test_server:timetrap(test_server:seconds(60)),
+    Dog = ct:timetrap({seconds,60}),
     [{watchdog, Dog}|Config].
 end_per_testcase(_Func, Config) ->
-    Dog = ?config(watchdog, Config),
-    test_server:timetrap_cancel(Dog).
+    Config.
+%%    Dog = ?config(watchdog, Config),
+%%    test_server:timetrap_cancel(Dog).
 
 %%% afunix:accept/1,2
 
@@ -137,7 +138,8 @@ t_shutdown_error(Config) when is_list(Config) ->
     ?line {ok, L} = afunix:listen(SocketName, []),
     ?line {error, enotconn} = afunix:shutdown(L, read_write),
     ?line ok = afunix:close(L),
-    ?line {error, closed} = afunix:shutdown(L, read_write),
+%%    ?line {error, closed} = afunix:shutdown(L, read_write),
+    ?line {error, einval} = afunix:shutdown(L, read_write),
     ok.
 
 t_shutdown_async(Config) when is_list(Config) ->
@@ -154,7 +156,7 @@ t_shutdown_async(Config) when is_list(Config) ->
     ?line case erlang:port_info(S, queue_size) of
 	      {queue_size, N} when N > 0 -> ok;
 	      {queue_size, 0} when OS =:= win32 -> ok;
-	      {queue_size, 0} = T -> ?t:fail({unexpected, T})
+	      {queue_size, 0} = T -> ct:fail({unexpected, T})
 	  end,
 
     ?line ok = afunix:shutdown(S, write),
@@ -162,7 +164,7 @@ t_shutdown_async(Config) when is_list(Config) ->
     ?line {error, closed} = afunix:recv(Client, 0),
     ?line case length(Buf) of
 	      PayloadSize -> ok;
-	      Sz -> ?t:fail({payload_size,
+	      Sz -> ct:fail({payload_size,
 			     {expected, PayloadSize},
 			     {received, Sz}})
 	  end.
@@ -211,7 +213,8 @@ t_fdconnect(Config) when is_list(Config) ->
     SocketName = socket_name(Config,"socket_t_fdopen"),
     {ok, L} = afunix:listen(SocketName, [{active, false}]),
     FD = afunix_api_SUITE:getsockfd(),
-    {ok, Client} = afunix:connect(SocketName, [{fd,FD},{port,20002},
+    {ok, Client} = afunix:connect(SocketName, [{fd,FD},%% {port,20002},
+					       %% {port,0},
 					       {active,false}]),
     {ok, Server} = afunix:accept(L),
     ok = afunix:send(Client, Question),
@@ -241,15 +244,19 @@ socket_name(Config, Name) ->
     SocketName.
 
 timeout({M,F,A}, Lower, Upper) ->
-    case test_server:timecall(M, F, A) of
+    T0 = erlang:monotonic_time(),
+    Value = apply(M, F, A),
+    T1 = erlang:monotonic_time(),
+    Duration = erlang:convert_time_unit(T1-T0,native,microsecond)/1000000,
+    case {Duration,Value} of
 	{Time, Result} when Time < Lower ->
-	    test_server:fail({too_short_time, Time, Result});
+	    ct:fail({too_short_time, Time, Result});
 	{Time, Result} when Time > Upper ->
-	    test_server:fail({too_long_time, Time, Result});
+	    ct:fail({too_long_time, Time, Result});
 	{_, {error, timeout}} ->
 	    ok;
 	{_, Result} ->
-	    test_server:fail({unexpected_result, Result})
+	    ct:fail({unexpected_result, Result})
     end.
 
 getsockfd() -> undefined.

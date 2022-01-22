@@ -19,7 +19,8 @@
 %%
 -module(afunix_echo_SUITE).
 
--include_lib("test_server/include/test_server.hrl").
+-include_lib("common_test/include/ct.hrl").
+%% -include_lib("test_server/include/test_server.hrl").
 
 %%-compile(export_all).
 
@@ -59,11 +60,12 @@ end_per_group(_GroupName, Config) ->
 
 
 init_per_testcase(_Func, Config) ->
-    Dog = test_server:timetrap(test_server:minutes(5)),
+    Dog = ct:timetrap({minutes,5}),
     [{watchdog, Dog}|Config].
 end_per_testcase(_Func, Config) ->
-    Dog = ?config(watchdog, Config),
-    test_server:timetrap_cancel(Dog).
+    Config.
+%%    Dog = ?config(watchdog, Config),
+%%    ct:est_server:timetrap_cancel(Dog).
 
 active_echo(doc) -> 
     ["Test sending packets of various sizes and various packet types ",
@@ -279,7 +281,7 @@ echo_packet1(EchoSock, Type, EchoFun, Size) ->
 				  case Size of
 				      {N, Max} when N > Max -> 
 					  ?line 
-					      test_server:fail(
+					      ct:fail(
 						{packet_through, {N, Max}});
 				      _ -> ok
 				  end;
@@ -290,11 +292,11 @@ echo_packet1(EchoSock, Type, EchoFun, Size) ->
 					  io:format(" Blocked!");
 				      _ -> 
 					  ?line
-					      test_server:fail(
+					      ct:fail(
 						{packet_blocked, Size})
 				  end;
 			  Error ->
-			      ?line test_server:fail(Error)
+			      ?line ct:fail(Error)
 		      end
 	  end.
 
@@ -316,11 +318,11 @@ active_recv(Sock, Type, [PacketEcho|Tail]) ->
 	      {Tag, Sock, PacketEcho} ->
 		  active_recv(Sock, Type, Tail);
 	      {Tag, Sock, Bad} ->
-		  ?line test_server:fail({wrong_data, Bad, expected, PacketEcho});
+		  ?line ct:fail({wrong_data, Bad, expected, PacketEcho});
 	      {tcp_error, Sock, Reason} ->
 		  {error, Reason};
 	      Other ->
-		  ?line test_server:fail({unexpected_message, Other, Tag})
+		  ?line ct:fail({unexpected_message, Other, Tag})
 	  end.
 
 passive_echo(Sock, _Type, Packet, PacketEchos) ->
@@ -337,13 +339,13 @@ passive_recv(Sock, [PacketEcho | Tail]) ->
 		  passive_recv(Sock, Tail);
 	      {ok, Bad} ->
 		  io:format("Expected: ~p\nGot: ~p\n",[PacketEcho,Bad]),
-		  ?line test_server:fail({wrong_data, Bad});
+		  ?line ct:fail({wrong_data, Bad});
 	      {error,PacketEcho} ->
 		  passive_recv(Sock, Tail); % expected error
 	      {error, _}=Error ->
 		  Error;
 	      Other ->
-		  ?line test_server:fail({unexpected_message, Other})
+		  ?line ct:fail({unexpected_message, Other})
 	  end.
 
 active_once_echo(Sock, Type, Packet, PacketEchos) ->
@@ -363,11 +365,11 @@ active_once_recv(Sock, Type, [PacketEcho | Tail]) ->
 		  inet:setopts(Sock, [{active, once}]),
 		  active_once_recv(Sock, Type, Tail);
 	      {Tag, Sock, Bad} ->
-		  ?line test_server:fail({wrong_data, Bad});
+		  ?line ct:fail({wrong_data, Bad});
 	      {tcp_error, Sock, Reason} ->
 		  {error, Reason};
 	      Other ->
-		  ?line test_server:fail({unexpected_message, Other, expected, {Tag, Sock, PacketEcho}})
+		  ?line ct:fail({unexpected_message, Other, expected, {Tag, Sock, PacketEcho}})
 	  end.
 
 %%% Building of random packets.
@@ -442,14 +444,7 @@ random_char(Chars) ->
     lists:nth(uniform(length(Chars)), Chars).
 
 uniform(N) ->
-    case get(random_seed) of
-	undefined ->
-	    {X, Y, Z} = time(),
-	    random:seed(X, Y, Z);
-	_ ->
-	    ok
-    end,
-    random:uniform(N).
+    rand:uniform(N).
 
 put_int32(X, big, List) ->
     [ (X bsr 24) band 16#ff, 

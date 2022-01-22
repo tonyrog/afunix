@@ -20,6 +20,7 @@
 #include "erl_nif.h"
 
 #include <stdio.h>
+#include <unistd.h>
 #include <string.h>
 #include <assert.h>
 #include <limits.h>
@@ -39,7 +40,7 @@ static ERL_NIF_TERM getsockfd(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[
 {
     int fd;
 
-    fd = sock_open(AF_INET, SOCK_STREAM, 0);
+    fd = sock_open(AF_UNIX, SOCK_STREAM, 0);
     return enif_make_int(env, fd);
 }
 

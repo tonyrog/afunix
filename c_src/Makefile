@@ -6,19 +6,19 @@ CFLAGS=-MMD -MP -MF .$<.d -I$(ERL_TOP)/usr/include
 #@END-C_SRC-DEFAULT-RULES@
 
 APP=afunix
-CFLAGS+=-std=c99 -Wall -O3
+CFLAGS+=-std=c99 -Wall -O3 # -DDLOG_DEFAULT=DLOG_DEBUG
 LDFLAGS+=-shared
 
-OBJS = afunix_drv.o packet_parser.o
+OBJS = afunix_nif.o
 LIBS = 
 
-all: ../priv/$(APP)_drv.so
+all: ../priv/$(APP)_nif.so
 
-../priv/$(APP)_drv.so: $(OBJS)
-	$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o ../priv/$(APP)_drv.so
+../priv/$(APP)_nif.so: $(OBJS)
+	$(CC) $(LDFLAGS) $(OBJS) -o $@
 
 clean:
-	rm -f $(OBJS) ../priv/$(APP)_drv.so .*.d
+	rm -f $(OBJS) ../priv/$(APP)_nif.so .*.d
 
 %.o:	%.c
 	$(CC) $(CFLAGS) -c -fPIC $<
