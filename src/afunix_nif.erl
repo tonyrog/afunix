@@ -9,14 +9,14 @@
 
 -export([get_peercred/1]).
 -export([get_peerpid/1]).
--export([get_uid/1]).
--export([get_euid/1]).
+-export([get_uid/0]).
+-export([get_euid/0]).
 
 %% internal
 -export([get_peercred_/1]).
 -export([get_peerpid_/1]).
--export([get_uid_/1]).
--export([get_euid_/1]).
+-export([get_uid_/0]).
+-export([get_euid_/0]).
 
 -on_load(init/0).
 
@@ -34,18 +34,16 @@ get_peerpid(Socket) ->
     {ok,Fd} = prim_inet:getfd(Socket),
     get_peerpid_(Fd).
 
-get_uid(Socket) ->
-    {ok,Fd} = prim_inet:getfd(Socket),
-    get_uid_(Fd).
+get_uid() ->
+    get_uid_().
 
-get_euid(Socket) ->
-    {ok,Fd} = prim_inet:getfd(Socket),
-    get_euid_(Fd).
+get_euid() ->
+    get_euid_().
 
 get_peercred_(_Fd) -> ?nif_stub().
 get_peerpid_(_Fd) -> ?nif_stub().
-get_uid_(_Fd) -> ?nif_stub().
-get_euid_(_Fd) -> ?nif_stub().
+get_uid_() -> ?nif_stub().
+get_euid_() -> ?nif_stub().
 
     
 

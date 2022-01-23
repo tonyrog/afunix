@@ -31,8 +31,8 @@
 
 -export([get_peercred/1]).
 -export([get_peerpid/1]).
--export([get_uid/1]).
--export([get_euid/1]).
+-export([get_uid/0]).
+-export([get_euid/0]).
 
 -define(FAMILY, local).
 %%
@@ -111,7 +111,7 @@ translate_ip(IP) -> local_udp:translate_ip(IP).
 get_peercred(S) -> afunix_nif:get_peercred(S).
 %% get peer-credentials (only effecive uid right now)
 get_peerpid(S) -> afunix_nif:get_peerpid(S).
-%% get peer-credentials (only effecive uid right now)
-get_uid(S) -> afunix_nif:get_uid(S).
-%% get peer-credentials (only effecive uid right now)
-get_euid(S) ->afunix_nif:get_euid(S).
+%% get uid
+get_uid() -> afunix_nif:get_uid().
+%% get effecive uid right
+get_euid() ->afunix_nif:get_euid().

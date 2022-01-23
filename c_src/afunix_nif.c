@@ -106,7 +106,7 @@ static ERL_NIF_TERM get_peercred(ErlNifEnv* env, int argc, const ERL_NIF_TERM* a
 }
     
 
-static ERL_NIF_TERM get_peerid(ErlNifEnv* env, int argc, const ERL_NIF_TERM* argv)
+static ERL_NIF_TERM get_peerpid(ErlNifEnv* env, int argc, const ERL_NIF_TERM* argv)
 {
     int fd;
 
@@ -162,10 +162,10 @@ static ERL_NIF_TERM get_euid(ErlNifEnv* env, int argc, const ERL_NIF_TERM* argv)
 
 static ErlNifFunc nif_funcs[] =
 {
-    {"get_peercred", 1, get_peercred},
-    {"get_peerid", 1, get_peerid},
-    {"get_uid", 0, get_uid},
-    {"get_euid", 0, get_euid}
+    {"get_peercred_", 1, get_peercred},
+    {"get_peerpid_", 1, get_peerpid},
+    {"get_uid_", 0, get_uid},
+    {"get_euid_", 0, get_euid}
 };
 
 ERL_NIF_INIT(afunix_nif,nif_funcs,NULL,NULL,NULL,NULL)
